@@ -1,0 +1,19 @@
+[project]
+name = "formula-1-plotly-utils"
+version = "0.1.0"
+description = "Utilities to plot formula1-data based on fastf1-api via plotly."
+authors = [
+    {name = "Giancarlo Rizzo"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "plotly (>=6.5.2,<7.0.0)",
+    "pandas (<3.0.0)",
+    "fastf1 (>=3.8.1,<4.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
