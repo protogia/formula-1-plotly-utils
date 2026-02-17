@@ -10,6 +10,7 @@ from typing import Optional
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
+from definitions import track_status_colors, compound_colors
 
 _logger = get_logger(__package__)
 
@@ -451,14 +452,6 @@ def plot_tyre_strategies(
 
     track_status_changes = track_status.copy()
 
-    compound_colors = {
-        'SOFT': 'red',
-        'MEDIUM': 'yellow',
-        'HARD': 'white',
-        'INTERMEDIATE': 'green',
-        'WET': 'blue'
-    }
-
     fig = go.Figure()
 
     added_compounds = set()
@@ -504,30 +497,7 @@ def plot_tyre_strategies(
         height=800 
     )
 
-    # add vertical lines
-    track_status_colors = {
-        "AllClear": "green",
-        "Yellow": "yellow",
-        "Red": "red",
-        "SCDeployed": "purple",
-        "VSCDeployed": "violet",
-        "VSCEnding": "orange",
-    }
-
-    # filter race.track_status for relevant statuses
-    filtered_track_status_changes = track_status[
-        track_status['Message'].isin(track_status_colors.keys())
-    ].copy()
-
-    # add a lap-column to filtered_track_status_changes by finding the lap number closest to the event time
-    filtered_track_status_changes['Lap'] = filtered_track_status_changes['Time'].apply(
-        lambda event_time: laps.loc[laps['Time'] <= event_time, 'LapNumber'].max() if not laps.loc[laps['Time'] <= event_time].empty else None
-    )
-    filtered_track_status_changes.dropna(subset=['Lap'], inplace=True)
-    filtered_track_status_changes['Lap'] = filtered_track_status_changes['Lap'].astype(int)
-
-    # group to handle multiple events per lap
-    grouped_track_status = filtered_track_status_changes.groupby('Lap')
+    grouped_track_status = _get_track_status_changes(laps, track_status)
 
     # vertical lines for track status changes
     for lap, lap_events in grouped_track_status:
@@ -583,3 +553,195 @@ def plot_tyre_strategies(
     return fig
 
 
+def plot_pitstop_durations(
+        choosen_drivers: list, 
+        laps: pd.DataFrame, 
+        track_status: pd.DataFrame
+    ):
+
+    pitstop_times = {}
+    individual_pitstop_durations = {}
+
+    for driver in choosen_drivers:
+        driver_laps = laps.pick_driver(driver).reset_index(drop=True)
+
+        # laps where the driver entered pits
+        pit_in_laps = driver_laps.loc[driver_laps['PitInTime'].notnull()]
+
+        total_pitstop_duration = pd.Timedelta(seconds=0)
+        driver_pitstop_list = []
+
+        for index, pit_in_lap in pit_in_laps.iterrows():
+            # lap after the pit-in lap where PitOutTime not null
+            next_lap_index = pit_in_lap.name + 1
+            if next_lap_index < len(driver_laps):
+                pit_out_lap = driver_laps.loc[next_lap_index]
+                if pd.notnull(pit_out_lap['PitOutTime']):
+                    # calc timediff
+                    if isinstance(pit_in_lap['PitInTime'], pd.Timedelta) and isinstance(pit_out_lap['PitOutTime'], pd.Timedelta):
+                        pitstop_duration = pit_out_lap['PitOutTime'] - pit_in_lap['PitInTime']
+                    else:
+                        try:
+                            pitstop_duration = pd.to_timedelta(pit_out_lap['PitOutTime']) - pd.to_timedelta(pit_in_lap['PitInTime'])
+                        except ValueError:
+                            pitstop_duration = pd.Timedelta(seconds=0) # Handle cases where conversion fails
+
+
+                    total_pitstop_duration += pitstop_duration
+                    driver_pitstop_list.append({'LapNumber': pit_in_lap['LapNumber'], 'Duration': pitstop_duration})
+                else:
+                    print(f"Warning: Could not find PitOutTime for pit stop starting on Lap {pit_in_lap['LapNumber']} for driver {driver}")
+
+
+        pitstop_times[driver] = total_pitstop_duration
+        individual_pitstop_durations[driver] = driver_pitstop_list
+    
+    # conv pitstop durations dict to df
+    individual_pitstops_list = []
+    for driver, stops in individual_pitstop_durations.items():
+        for stop in stops:
+            individual_pitstops_list.append({'Driver': driver, 'LapNumber': stop['LapNumber'], 'PitStopDurationSeconds': stop['Duration'].total_seconds()})
+
+    individual_pitstops_df = pd.DataFrame(individual_pitstops_list)
+
+    # plot
+    fig = px.bar(individual_pitstops_df,
+                x='LapNumber',
+                y='PitStopDurationSeconds',
+                color='Driver',
+                title='Individual Pit Stop Durations per Driver',
+                labels={'LapNumber': 'Lap Number', 'PitStopDurationSeconds': 'Pit Stop Duration (seconds)'},
+                barmode='group' # group shows bars side by side for each lap
+                )
+
+    fig.update_layout(xaxis_title='Lap Number', yaxis_title='Pit Stop Duration (seconds)')
+
+    grouped_track_status = _get_track_status_changes(laps, track_status)
+
+    # vertical lines for track status changes
+    for lap, lap_events in grouped_track_status:
+        if lap > 23 and lap < 35:
+            line_color = track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+
+            fig.add_vline(
+                x=lap,
+                line_width=2,
+                line_dash="dash",
+                line_color=line_color,
+                layer="above", 
+            )
+
+            num_events = len(lap_events)
+            vertical_offsets = np.linspace(0, fig.layout.yaxis.range[1] if fig.layout.yaxis.range else 50, num_events) # Adjust the range and number of points as needed
+
+            for i, (index, row) in enumerate(lap_events.iterrows()):
+                event_color = track_status_colors.get(row['Message'], 'gray')
+
+                fig.add_trace(go.Scatter(
+                    x=[row['Lap']],
+                    y=[vertical_offsets[i]], 
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color=event_color,
+                        symbol='circle', 
+                        line=dict(color='black', width=1)
+                    ),
+                    hoverinfo='text',
+                    text=f"Track Status: {row['Message']}, Lap {row['Lap']}",
+                    showlegend=False 
+                ))
+
+    # legend for the track status colors by adding invisible traces
+    for status, color in track_status_colors.items():
+        fig.add_trace(go.Scatter(
+            x=[None], # No data
+            y=[None],
+            mode='markers',
+            marker=dict(size=10, color=color, symbol='circle'),
+            legendgroup='Track Status',
+            showlegend=True,
+            name=status
+        ))
+
+    return fig
+
+
+def plot_laptime_distribution(
+        laps: pd.DataFrame,
+        session_start_time: datetime,
+        drivers: list,
+        weather_data: pd.DataFrame = None,
+    ) -> pd.DataFrame:         
+
+    drivers_laps = laps[laps['Driver'].isin(drivers)].copy()
+    drivers_laps['DateTime'] = session_start_time + drivers_laps['Time']
+    drivers_laps['LapTimeSeconds'] = drivers_laps['LapTime'].dt.total_seconds()
+    drivers_laps['LapTimeZScore'] = (drivers_laps['LapTimeSeconds'] - drivers_laps['LapTimeSeconds'].mean()) / drivers_laps['LapTimeSeconds'].std()
+    drivers_laps_filtered = drivers_laps[abs(drivers_laps['LapTimeZScore']) <= 3].copy()
+    
+    if weather_data is not None:
+        weather_data_datetime = weather_data['Time']
+
+        # copy of weather_data with datetime index for merging
+        weather_data_for_merge = weather_data.copy()
+        weather_data_for_merge['DateTime'] = weather_data_datetime
+
+        drivers_laps_filtered = drivers_laps.sort_values(by='DateTime')
+        weather_data_for_merge_sorted = weather_data_for_merge.sort_values(by='DateTime')
+
+        merged_laps_weather = pd.merge_asof(
+            drivers_laps_filtered,
+            weather_data_for_merge_sorted[['DateTime', 'Rainfall', 'AirTemp', 'TrackTemp', 'Humidity', 'Pressure', 'WindSpeed']],
+            on='DateTime',
+            direction='backward' # find the closest timestamp before or at the lap time
+        )
+
+        merged_laps_weather.dropna(subset=['Rainfall'], inplace=True)
+
+        rainy_laps_df = merged_laps_weather[merged_laps_weather['Rainfall'] == True].copy()
+        dry_laps_df = merged_laps_weather[merged_laps_weather['Rainfall'] == False].copy()
+
+        average_rainy_lap_times = rainy_laps_df.groupby('Driver')['LapTime'].mean().dt.total_seconds()
+        average_dry_lap_times = dry_laps_df.groupby('Driver')['LapTime'].mean().dt.total_seconds()
+
+        # combine for plot
+        combined_laps_df = pd.concat([rainy_laps_df.assign(Condition='Raining'),
+                                    dry_laps_df.assign(Condition='Not Raining')])
+
+        fig = px.violin(combined_laps_df,
+                            y='LapTimeSeconds',
+                            x='Driver',
+                            color='Condition',
+                            box=True, #  box plot inside violin
+                            points='all', 
+                            title='Lap Time Distribution by Driver and Condition',
+                            labels={'Driver': 'Driver', 'LapTimeSeconds': 'Lap Time (seconds)', 'Condition': 'Condition'},
+                            color_discrete_map={'Raining': 'blue', 'Not Raining': 'orange'}
+                            )
+
+        fig.update_layout(xaxis_title='Driver', yaxis_title='Lap Time (seconds)')
+    else:
+        raise Exception
+    return fig
+
+
+def _get_track_status_changes(
+        laps: pd.DataFrame,
+        track_status: pd.DataFrame
+    ) -> pd.DataFrame:
+
+    filtered_track_status_changes = track_status[
+        track_status['Message'].isin(track_status_colors.keys())
+    ].copy()
+
+    # add lap-column by finding the lap number closest to event time
+    filtered_track_status_changes['Lap'] = filtered_track_status_changes['Time'].apply(
+        lambda event_time: laps.loc[laps['Time'] <= event_time, 'LapNumber'].max() if not laps.loc[laps['Time'] <= event_time].empty else None
+    )
+    filtered_track_status_changes.dropna(subset=['Lap'], inplace=True)
+    filtered_track_status_changes['Lap'] = filtered_track_status_changes['Lap'].astype(int)
+
+    # group to handle multiple events per lap
+    return filtered_track_status_changes.groupby('Lap')
+    
