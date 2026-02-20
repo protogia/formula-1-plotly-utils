@@ -667,7 +667,7 @@ def plot_pitstop_durations(
     return fig
 
 
-def plot_laptime_distribution(
+def plot_laptime_distribution_weatherdependent(
         laps: pd.DataFrame,
         session_start_time: datetime,
         drivers: list,
@@ -725,6 +725,135 @@ def plot_laptime_distribution(
         raise Exception
     return fig
 
+
+def plot_laptime_distribution_per_compound(laps: pd.DataFrame, drivers: list, results: pd.DataFrame):
+    filtered_laps = laps[laps['Driver'].isin(drivers)].copy()
+    filtered_laps['LapTimeSeconds'] = filtered_laps['LapTime'].dt.total_seconds()
+
+    # box plot compounds
+    fig = px.box(filtered_laps,
+        x='Driver',
+        y='LapTimeSeconds',
+        color='Compound',
+        points='all',
+        hover_data=['LapNumber'],
+        title='Lap Time Performance per Driver and Tyre Compound')
+
+    driver_positions = results.sort_values(by='Position')['Abbreviation'].tolist()
+    fig.update_layout(
+        xaxis_title='Driver',
+        yaxis_title='Lap Time (seconds)',
+        legend_title='Tyre Compound',
+        xaxis=dict(categoryorder='array', categoryarray=driver_positions)
+    )
+    return fig
+
+
+def plot_laptime_distribution_per_qualifyinground(laps: pd.DataFrame, drivers: list, results: pd.DataFrame):
+    filtered_laps = laps[laps['Driver'].isin(drivers)].copy()
+    
+    # identify the border of qualifying rounds
+    if 'q2_end_lap' not in locals() or 'q3_end_lap' not in locals():
+        if not results.empty:
+            q2_end_lap = laps[laps['DriverNumber'].isin(results[results['Position'] == 16]['DriverNumber'].values)]['LapNumber'].max()
+            q3_end_lap = laps[laps['DriverNumber'].isin(results[results['Position'] == 11]['DriverNumber'].values)]['LapNumber'].max()
+        else:
+            q2_end_lap = None
+            q3_end_lap = None
+
+    filtered_laps['QualifyingRound'] = 'SQ1'
+    if q2_end_lap is not None:
+        filtered_laps.loc[filtered_laps['LapNumber'] > q2_end_lap, 'QualifyingRound'] = 'SQ2'
+    if q3_end_lap is not None:
+        filtered_laps.loc[filtered_laps['LapNumber'] > q3_end_lap, 'QualifyingRound'] = 'SQ3'
+
+    # laptime to seconds for plotting
+    filtered_laps['LapTimeSeconds'] = filtered_laps['LapTime'].dt.total_seconds()
+
+    # final driver positions sorted
+    if not results.empty:
+        driver_positions = results.sort_values(by='Position')['Abbreviation'].tolist()
+        filtered_laps['Driver_Category'] = pd.Categorical(filtered_laps['Driver'], categories=driver_positions, ordered=True)
+        filtered_laps.sort_values(by='Driver_Category', inplace=True)
+
+    fig = px.box(filtered_laps,
+                    x='Driver',
+                    y='LapTimeSeconds',
+                    color='QualifyingRound',
+                    points='all',
+                    hover_data=['LapNumber', 'Compound'],
+                    title='Lap Time Performance per Driver and Qualifying Round')
+
+    fig.update_layout(
+        xaxis_title='Driver',
+        yaxis_title='Lap Time (seconds)',
+        legend_title='Qualifying Round',
+        xaxis=dict(categoryorder='array', categoryarray=driver_positions)
+    )
+    return fig
+
+
+def plot_best_laptime(results: pd.DataFrame, drivers: list, criteria: str=None):
+    filtered_results = results[results['Abbreviation'].isin(drivers)].copy()
+
+    if criteria == "qualifying":
+        # Q1, Q2, Q3 columns to seconds
+        best_lap_times_official = filtered_results[['Abbreviation', 'Q1', 'Q2', 'Q3']].copy()
+        for col in ['Q1', 'Q2', 'Q3']:
+            best_lap_times_official[col] = best_lap_times_official[col].apply(lambda x: x.total_seconds() if pd.notna(x) else np.nan)
+
+        value_vars=['Q1', 'Q2', 'Q3']
+        var_name='QualifyingRound'
+
+    elif criteria == "compound":
+        #!todo
+        value_vars=None
+        var_name='Compound'
+        
+    elif criteria == "weather":
+        #!todo rain/dry
+        value_vars=None
+        var_name='Rainy/Dry'
+
+    best_lap_times_official = best_lap_times_official.melt(
+        id_vars='Abbreviation',
+        value_vars=value_vars,
+        var_name=var_name,
+        value_name='BestLapTime'
+    ).dropna(subset=['BestLapTime'])
+
+    # best overall lap time per driver from the official results for sorting
+    best_overall_lap_time_driver_official = best_lap_times_official.groupby('Abbreviation')['BestLapTime'].min().reset_index()
+    best_overall_lap_time_driver_official = best_overall_lap_time_driver_official.rename(columns={'BestLapTime': 'BestOverallLapTime'})
+
+    # merge best lap times with overall best lap time for sorting
+    best_lap_times_official = pd.merge(best_lap_times_official, best_overall_lap_time_driver_official, on='Abbreviation', how='left')
+
+    if not best_overall_lap_time_driver_official.empty:
+        driver_order_official = best_overall_lap_time_driver_official.sort_values(by='BestOverallLapTime')['Abbreviation'].tolist()
+        best_lap_times_official['Driver_Category'] = pd.Categorical(best_lap_times_official['Abbreviation'], categories=driver_order_official, ordered=True)
+        best_lap_times_official.sort_values(by='Driver_Category', inplace=True)
+
+    # plot
+    fig = px.scatter(best_lap_times_official,
+                            x='Abbreviation',
+                            y='BestLapTime',
+                            color=var_name, 
+                            symbol=var_name,
+                            hover_data=[var_name, 'BestLapTime'],
+                            title=f'Best Lap Time per Driver by {var_name}')
+
+    fig.update_layout(
+        xaxis_title='Driver',
+        yaxis_title='Best Lap Time (seconds)',
+        legend_title=var_name,
+        xaxis=dict(categoryorder='array', categoryarray=driver_order_official) # order of drivers on x-axis
+    )
+    return fig
+
+
+def plot_driver_position_per_lap():
+    pass
 
 def _get_track_status_changes(
         laps: pd.DataFrame,
