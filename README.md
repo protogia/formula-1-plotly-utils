@@ -1,6 +1,6 @@
 # Formula-1-plotly-utils
 
-Utilities to plot formula1-data based on fastf1-api via plotly. Contains transfered examples from [fastf1-gallery](https://docs.fastf1.dev/gen_modules/examples_gallery/index.html) as well as own creations used in my [just-for-fun-evaluations](https://github.com/protogia/formula1-evaluations).
+Utilities to plot formula1-data based on fastf1-api via plotly. Contains transfered matplotlib-examples from [fastf1-gallery](https://docs.fastf1.dev/gen_modules/examples_gallery/index.html) as well as own creations used in my just for fun [formula1-evaluations](https://github.com/protogia/formula1-evaluations).
 
 ## Install
 ```bash
