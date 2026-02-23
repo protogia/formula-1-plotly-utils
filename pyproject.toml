@@ -12,14 +12,11 @@ dependencies = [
     "pandas (<3.0.0)",
     "fastf1 (>=3.8.1,<4.0.0)"
 ]
+packages = [
+    { include = "formula_1_plotly_utils" }
+]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
-
-
-[tool.poetry.packages]
-include = [
-    { include = "formula_1_plotly_utils", from = "." }
-]
