@@ -10,7 +10,7 @@ from typing import Optional
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
-from formula_1_plotly_utils.definitions import track_status_colors, compound_colors
+from formula_1_plotly_utils import definitions
 
 _logger = get_logger(__package__)
 
@@ -462,7 +462,7 @@ def plot_tyre_strategies(
         previous_stint_end = 0
         for idx, row in driver_stints.iterrows():
             compound = row["Compound"]
-            color = compound_colors.get(compound.upper(), 'gray') 
+            color = definitions.compound_colors.get(compound.upper(), 'gray') 
             
             # determine whether to show the legend entry for this compound
             show_legend_entry = False
@@ -501,7 +501,7 @@ def plot_tyre_strategies(
 
     # vertical lines for track status changes
     for lap, lap_events in grouped_track_status:
-        line_color = track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+        line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
 
         fig.add_vline(
             x=lap,
@@ -523,7 +523,7 @@ def plot_tyre_strategies(
             driver_y_index = 0 # Default to 0 if no drivers are found
 
         for i, (index, row) in enumerate(lap_events.iterrows()):
-            event_color = track_status_colors.get(row['Message'], 'gray')
+            event_color = definitions.track_status_colors.get(row['Message'], 'gray')
 
             fig.add_trace(go.Scatter(
                 x=[row['Lap']],
@@ -540,7 +540,7 @@ def plot_tyre_strategies(
                 showlegend=False,
             ))
 
-    for status, color in track_status_colors.items():
+    for status, color in definitions.track_status_colors.items():
         fig.add_trace(go.Scatter(
             x=[None], 
             y=[None],
@@ -621,7 +621,7 @@ def plot_pitstop_durations(
     # vertical lines for track status changes
     for lap, lap_events in grouped_track_status:
         if lap > 23 and lap < 35:
-            line_color = track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+            line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
 
             fig.add_vline(
                 x=lap,
@@ -635,7 +635,7 @@ def plot_pitstop_durations(
             vertical_offsets = np.linspace(0, fig.layout.yaxis.range[1] if fig.layout.yaxis.range else 50, num_events) # Adjust the range and number of points as needed
 
             for i, (index, row) in enumerate(lap_events.iterrows()):
-                event_color = track_status_colors.get(row['Message'], 'gray')
+                event_color = definitions.track_status_colors.get(row['Message'], 'gray')
 
                 fig.add_trace(go.Scatter(
                     x=[row['Lap']],
@@ -653,7 +653,7 @@ def plot_pitstop_durations(
                 ))
 
     # legend for the track status colors by adding invisible traces
-    for status, color in track_status_colors.items():
+    for status, color in definitions.track_status_colors.items():
         fig.add_trace(go.Scatter(
             x=[None], # No data
             y=[None],
@@ -861,7 +861,7 @@ def _get_track_status_changes(
     ) -> pd.DataFrame:
 
     filtered_track_status_changes = track_status[
-        track_status['Message'].isin(track_status_colors.keys())
+        track_status['Message'].isin(definitions.track_status_colors.keys())
     ].copy()
 
     # add lap-column by finding the lap number closest to event time
