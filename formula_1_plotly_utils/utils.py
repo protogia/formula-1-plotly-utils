@@ -10,7 +10,7 @@ from typing import Optional
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
-from definitions import track_status_colors, compound_colors
+from formula_1_plotly_utils.definitions import track_status_colors, compound_colors
 
 _logger = get_logger(__package__)
 
