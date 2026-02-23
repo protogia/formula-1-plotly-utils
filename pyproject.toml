@@ -12,6 +12,9 @@ dependencies = [
     "pandas (<3.0.0)",
     "fastf1 (>=3.8.1,<4.0.0)"
 ]
+
+
+[tool.poetry]
 packages = [
     { include = "formula_1_plotly_utils" }
 ]
