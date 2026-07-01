@@ -212,9 +212,11 @@ def plot_track_elevation(
     # cumulative distance along track
     cumulative_distance = distances.cumsum()/10
 
-    # gradient
+    # aclc gradient
     altitude_meters = position['Z'].values + reference_altitude
-    altitude_gradient = np.gradient(altitude_meters)
+    altitude_diff = position['Z'].diff().fillna(0)
+
+    altitude_gradient = np.where(distances > 0, (altitude_diff / distances) * 100, 0)
 
     # color scale based on the altitude gradient values
     colorscale = 'Plasma'
@@ -288,8 +290,7 @@ def plot_track_elevation(
         xaxis_title='Distance along Track [m]', # Update x-axis title
         yaxis_title='Altitude Gradient [%]',
     )
-
-    fig.show()
+    return fig
 
 
 def plot_weather_data(
@@ -668,7 +669,6 @@ def plot_pitstop_durations(
             showlegend=True,
             name=status
         ))
-
     return fig
 
 
