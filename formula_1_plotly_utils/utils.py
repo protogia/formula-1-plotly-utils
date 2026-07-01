@@ -125,7 +125,12 @@ def plot_track(
 
     # calc gradient
     altitude_meters = position['Z'].values + reference_altitude
-    altitude_gradient = np.gradient(altitude_meters)
+    altitude_diff = position['Z'].diff().fillna(0)
+
+    delta_x = position['X'].diff().fillna(0)
+    delta_y = position['Y'].diff().fillna(0)
+    distances = np.sqrt(delta_x**2 + delta_y**2)
+    altitude_gradient = np.where(distances > 0, (altitude_diff / distances) * 100, 0)
 
     # scatter plot with color scale based on the altitude gradient
     fig = go.Figure(data=go.Scatter(
