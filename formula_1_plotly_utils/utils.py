@@ -10,10 +10,17 @@ from typing import Optional
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
+from scipy.interpolate import interp1d
 from formula_1_plotly_utils import definitions
 
 _logger = get_logger(__package__)
 
+
+# Helper function to rotate track coordinates
+def _rotate(xy, *, angle):
+    rot_mat = np.array([[np.cos(angle), np.sin(angle)],
+                        [-np.sin(angle), np.cos(angle)]])
+    return np.matmul(xy, rot_mat)
 
 
 def setup_plotly(color_scheme: str = None):
@@ -112,11 +119,6 @@ def plot_track(
     Returns:
         plotly.graph_objects.Figure: An interactive Plotly figure object.
     """
-
-    def _rotate(xy, *, angle):
-        rot_mat = np.array([[np.cos(angle), np.sin(angle)],
-                            [-np.sin(angle), np.cos(angle)]])
-        return np.matmul(xy, rot_mat)
 
     # rotate track
     track = position.loc[:, ('X', 'Y')].to_numpy()
@@ -992,3 +994,277 @@ def plot_leading_laptimes(drivers: list, laps: pd.DataFrame, track_status: pd.Da
                 showlegend=False,
             ))
         
+
+
+def plot_telemetry_comparison(
+    session,
+    driver1_code,
+    driver2_code,
+    metrics_to_plot=None,
+    highlight_distance=None,
+    custom_title=None
+):
+    """Plots a detailed telemetry comparison between two drivers' fastest laps.
+
+    Args:
+        session (fastf1.core.Session): The FastF1 session object.
+        driver1_code (str): The three-letter code for the first driver (e.g., 'LEC').
+        driver2_code (str): The three-letter code for the second driver (e.g., 'RUS').
+        metrics_to_plot (list, optional): A list of telemetry metrics to plot.
+            Defaults to ['Speed', 'Throttle', 'Brake', 'RPM', 'Gear'] (DRS excluded).
+        highlight_distance (float, optional): A distance in meters to add a vertical
+            marker on the line charts. Defaults to None.
+        custom_title (str, optional): A custom title for the plot. If None,
+            a default title will be generated. Defaults to None.
+    Returns:
+        plotly.graph_objects.Figure: An interactive Plotly figure object.
+    """
+
+    lec_fastest_lap = session.laps.pick_driver(driver1_code).pick_fastest()
+    rus_fastest_lap = session.laps.pick_driver(driver2_code).pick_fastest()
+
+    if lec_fastest_lap.empty:
+        print(f"{driver1_code}'s fastest lap not found.")
+        return
+    if rus_fastest_lap.empty:
+        print(f"{driver2_code}'s fastest lap not found.")
+        return
+
+    lec_tel = lec_fastest_lap.get_telemetry()
+    rus_tel = rus_fastest_lap.get_telemetry()
+
+    # Debugging: Print distance ranges
+    print(f"LEC Distance range: [{lec_tel['Distance'].min():.2f}, {lec_tel['Distance'].max():.2f}]")
+    print(f"RUS Distance range: [{rus_tel['Distance'].min():.2f}, {rus_tel['Distance'].max():.2f}]")
+
+
+    # Get circuit info for track rotation
+    circuit_info = session.get_circuit_info()
+    track_angle = circuit_info.rotation / 180 * np.pi if circuit_info is not None else 0
+
+    if metrics_to_plot is None:
+        metrics_to_plot = ['Speed', 'Throttle', 'Brake', 'RPM', 'Gear'] # DRS excluded
+
+    drivers_data = {driver1_code: lec_tel, driver2_code: rus_tel}
+    # Assuming consistent colors for LEC and RUS as in previous context
+    driver_colors = {'LEC': 'red', 'RUS': 'lightblue'}
+
+    common_telemetry_metrics = []
+    for metric in metrics_to_plot:
+        if metric in lec_tel.columns and metric in rus_tel.columns:
+            common_telemetry_metrics.append(metric)
+        elif metric == 'Gear':
+            print(f"Warning: '{metric}' data not found in telemetry for one or both drivers. Skipping this metric.")
+
+
+    if not common_telemetry_metrics:
+        print("No common telemetry metrics found to compare based on the requested metrics.")
+        print(f"LEC telemetry columns: {lec_tel.columns.tolist()}")
+        print(f"RUS telemetry columns: {rus_tel.columns.tolist()}")
+        print(f"Requested metrics_to_plot: {metrics_to_plot}")
+        return
+
+    print(f"Plotting the following common metrics: {common_telemetry_metrics}") # Added print for debugging
+
+    # Calculate overall min/max distance for consistent x-axis across line charts
+    min_overall_distance = min(lec_tel['Distance'].min(), rus_tel['Distance'].min())
+    max_overall_distance = max(lec_tel['Distance'].max(), rus_tel['Distance'].max())
+    x_axis_range = [min_overall_distance, max_overall_distance]
+
+    # Prepare subplot titles
+    subplot_titles = []
+    for metric in common_telemetry_metrics:
+        subplot_titles.append(f"{metric} (Line Chart)")
+        subplot_titles.append(f"Track Map (LEC - RUS {metric} Difference)") # Updated track map title
+
+    fig = make_subplots(
+        rows=len(common_telemetry_metrics),
+        cols=2,
+        shared_xaxes=True, # Ensure consistent X-axis scale for line charts in column 1
+        column_widths=[0.7, 0.3], # Allocate more width to line charts
+        subplot_titles=subplot_titles,
+        vertical_spacing=0.05,
+        horizontal_spacing=0.05 # Adjust spacing between line chart and track map
+    )
+
+    for i, metric in enumerate(common_telemetry_metrics):
+        # Line chart (Column 1)
+        for driver_code, telemetry_df in drivers_data.items():
+            fig.add_trace(go.Scatter(
+                x=telemetry_df['Distance'],
+                y=telemetry_df[metric],
+                mode='lines',
+                name=f'{driver_code} {metric}',
+                line=dict(color=driver_colors.get(driver_code)), # Use .get() for safety
+                showlegend=(i == 0), # Only show legend for the first metric to avoid clutter
+                legendgroup=driver_code
+            ), row=i + 1, col=1)
+
+        # Add vertical marker if specified
+        if highlight_distance is not None:
+            fig.add_vline(
+                x=highlight_distance,
+                line_width=1,
+                line_dash="dot",
+                line_color="black",
+                row=i+1, col=1
+            )
+
+        # Track Map (Column 2) - showing difference
+        # Ensure 'X' and 'Y' columns are present
+        if 'X' not in lec_tel.columns or 'Y' not in lec_tel.columns:
+            print("Warning: 'X' or 'Y' coordinates missing from LEC telemetry for track map.")
+            continue # Skip track map for this metric if coordinates are missing
+
+        # Interpolate Russell's telemetry onto Leclerc's distance points for comparison
+        try:
+            rus_interp_func = interp1d(rus_tel['Distance'], rus_tel[metric], kind='linear', fill_value="extrapolate")
+            rus_tel_interpolated = rus_interp_func(lec_tel['Distance'])
+            metric_difference = lec_tel[metric] - rus_tel_interpolated
+            # Calculate min/max for centering divergent color scale
+            max_abs_diff = np.max(np.abs(metric_difference)) if len(metric_difference) > 0 else 0
+            print(f"Metric '{metric}' difference min: {metric_difference.min():.2f}, max: {metric_difference.max():.2f}, max_abs_diff: {max_abs_diff:.2f}")
+
+        except Exception as e:
+            print(f"Warning: Could not interpolate {metric} for RUS: {e}")
+            metric_difference = np.zeros(len(lec_tel[metric])) # Default to zero difference if interpolation fails
+            max_abs_diff = 0 # No difference
+
+        lec_rotated_track = _rotate(lec_tel[['X', 'Y']].to_numpy(), angle=track_angle)
+
+        fig.add_trace(go.Scatter(
+            x=lec_rotated_track[:, 0],
+            y=lec_rotated_track[:, 1],
+            mode='lines+markers', # Changed to lines+markers for color to show
+            line=dict(width=4),
+            marker=dict(
+                size=5,
+                color=metric_difference, # Color by difference value
+                colorscale='RdBu', # Divergent colorscale for differences
+                cmin=-max_abs_diff, # Set min for divergent color scale
+                cmax=max_abs_diff,  # Set max for divergent color scale
+                colorbar=dict(
+                    title=f"LEC - RUS {metric} Difference", # Updated color bar title
+                    len=0.15, # Shorter colorbar
+                    x=1.05, y=1 - (i * (1.0/len(common_telemetry_metrics))) - (0.5/len(common_telemetry_metrics)), # Position colorbar per subplot
+                    yanchor="middle",
+                    xanchor="left",
+                    thickness=10,
+                    title_side="right"
+                ),
+                showscale=True # Show color scale for each track map
+            ),
+            hoverinfo='text',
+            text=[f"LEC - RUS {metric} Difference: {diff:.2f}" for diff in metric_difference], # Updated hover text
+            showlegend=False
+        ), row=i + 1, col=2)
+
+        # Update y-axis title for each line chart subplot
+        fig.update_yaxes(title_text=metric, row=i + 1, col=1)
+
+        # Update layout for track maps in column 2 (hide axes, ensure aspect ratio)
+        fig.update_xaxes(visible=False, row=i+1, col=2)
+        fig.update_yaxes(visible=False, scaleanchor="x", scaleratio=1, row=i+1, col=2)
+
+    # Update layout for the entire figure
+    main_title = custom_title if custom_title else \
+                 f"Telemetry Comparison: {lec_fastest_lap['Driver']} (Fastest Lap) vs {rus_fastest_lap['Driver']} (Fastest Lap)"
+    fig.update_layout(
+        title_text=main_title,
+        hovermode='x unified',
+        height=250 * len(common_telemetry_metrics), # Increased height for track maps
+        showlegend=True,
+        legend=dict(x=0.01, y=0.99, xanchor='left', yanchor='top'), # Position legend
+        xaxis_range=x_axis_range # Apply overall range to all shared x-axes
+    )
+
+    # Update x-axis title for the bottom subplot in column 1 (now that shared_xaxes=True is used, this applies to all)
+    fig.update_xaxes(title_text='Distance (meters)', row=len(common_telemetry_metrics), col=1)
+
+    print("Attempting to show the figure...") # Added print for debugging
+    return fig # Return the figure object
+
+
+
+
+def plot_lap_comparison(
+    lap1,
+    lap2,
+    lap1_label="Lap 1",
+    lap2_label="Lap 2",
+    metrics_to_plot=None,
+    highlight_distance=None,
+    session=None
+):
+    if lap1 is None or lap2 is None or lap1.empty or lap2.empty:
+        print("One or both laps are missing or empty.")
+        return
+
+    try:
+        tel1 = lap1.get_telemetry()
+        tel2 = lap2.get_telemetry()
+        if len(tel1) == 0 or len(tel2) == 0:
+            raise ValueError("Telemetry is empty for one of the laps.")
+    except Exception as e:
+        print(f"Could not retrieve telemetry for {lap1_label} L{int(lap1['LapNumber'])} or {lap2_label} L{int(lap2['LapNumber'])}: {e}")
+        return
+
+    target_session = session if session else lap1.session
+    circuit_info = target_session.get_circuit_info()
+    track_angle = circuit_info.rotation / 180 * np.pi if circuit_info is not None else 0
+
+    lap1_num = int(lap1['LapNumber'])
+    lap2_num = int(lap2['LapNumber'])
+    comparison_title_suffix = f"{lap1_label} (Lap {lap1_num}) vs {lap2_label} (Lap {lap2_num})"
+
+    pos1 = lap1.get_pos_data()
+
+    available_columns = set(tel1.columns).intersection(set(tel2.columns))
+    if metrics_to_plot is None:
+        potential_metrics = ['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']
+        metrics = [m for m in potential_metrics if m in available_columns]
+    else:
+        metrics = [m for m in metrics_to_plot if m in available_columns]
+
+    units = {'Speed': 'km/h', 'Throttle': '%', 'Brake': '%', 'RPM': 'RPM', 'nGear': 'Gear', 'DRS': 'Status'}
+    color1, color2 = 'red', 'lightblue'
+    max_dist = max(tel1['Distance'].max(), tel2['Distance'].max())
+
+    for metric in metrics:
+        unit = units.get(metric, '')
+        fig = make_subplots(rows=1, cols=2, column_widths=[0.4, 0.6], horizontal_spacing=0.05)
+
+        fig.add_trace(go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f"{lap1_label} L{lap1_num}", line=dict(color=color1), legendgroup="l1"), row=1, col=2)
+        fig.add_trace(go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f"{lap2_label} L{lap2_num}", line=dict(color=color2), legendgroup="l2"), row=1, col=2)
+
+        if highlight_distance is not None:
+            fig.add_vline(x=highlight_distance, line_width=2, line_dash="dot", line_color="green", row=1, col=2)
+
+        if circuit_info is not None:
+            for _, corner in circuit_info.corners.iterrows():
+                dist_sq = (pos1['X'] - corner['X'])**2 + (pos1['Y'] - corner['Y'])**2
+                closest_idx = dist_sq.idxmin()
+                closest_time = pos1.loc[closest_idx, 'Date']
+                tel_idx = (tel1['Date'] - closest_time).abs().idxmin()
+                corner_dist = tel1.loc[tel_idx, 'Distance']
+                fig.add_vline(x=corner_dist, line_width=1, line_dash="dash", line_color="grey", annotation_text=f"C-{corner['Number']}{corner['Letter']}", annotation_position="top right", row=1, col=2)
+
+        interp_func = interp1d(tel2['Distance'], tel2[metric], kind='linear', fill_value="extrapolate")
+        tel2_interp = interp_func(tel1['Distance'])
+        diff = tel1[metric] - tel2_interp
+        max_diff = np.max(np.abs(diff)) if np.max(np.abs(diff)) > 0 else 1
+        rot_coords = _rotate(tel1[['X', 'Y']].to_numpy(), angle=track_angle)
+
+        fig.add_trace(go.Scatter(x=rot_coords[:, 0], y=rot_coords[:, 1], mode='lines+markers', marker=dict(size=4, color=diff, colorscale='RdBu', reversescale=True, cmin=-max_diff, cmax=max_diff, cmid=0, showscale=True, colorbar=dict(thickness=15, x=-0.15, title=dict(text=f"Higher {metric}", side='top'), tickvals=[-max_diff, 0, max_diff], ticktext=[f"{lap2_label} L{lap2_num}", "Equal", f"{lap1_label} L{lap1_num}"]))), row=1, col=1)
+
+        if circuit_info is not None:
+            for _, corner in circuit_info.corners.iterrows():
+                track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
+                fig.add_annotation(x=track_x, y=track_y, text=f"{corner['Number']}{corner['Letter']}", showarrow=False, bgcolor="grey", font=dict(color="white", size=10), row=1, col=1)
+
+        fig.update_xaxes(range=[0, max_dist], title_text="Distance (m)", row=1, col=2)
+        fig.update_yaxes(title_text=f"{metric} [{unit}]", row=1, col=2)
+        fig.update_xaxes(visible=False, row=1, col=1)
+        fig.update_yaxes(visible=False, scaleanchor="x", scaleratio=1, row=1, col=1)
+        fig.update_layout(title=dict(text=f"{metric} Analysis: {comparison_title_suffix}", x=0.5, xanchor='center'), height=500, template="plotly_white", margin=dict(l=100, r=50, t=80, b=50), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+        fig.show()
