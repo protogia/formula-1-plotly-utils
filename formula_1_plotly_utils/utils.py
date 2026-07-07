@@ -879,3 +879,116 @@ def _get_track_status_changes(
     # group to handle multiple events per lap
     return filtered_track_status_changes.groupby('Lap')
     
+
+
+def plot_leading_laptimes(drivers: list, laps: pd.DataFrame, track_status: pd.DataFrame):
+    # Ensure 'LapTime' is in timedelta format
+    if 'LapTime' not in laps.columns or not pd.api.types.is_timedelta64_dtype(laps['LapTime']):
+        laps['LapTime'] = pd.to_timedelta(laps['LapTime'])
+    cleaned_laps = laps.dropna(subset=['LapNumber', 'LapTime']).copy()
+
+    # Convert LapTime to total seconds for numerical comparison
+    cleaned_laps['LapTimeSeconds'] = cleaned_laps['LapTime'].dt.total_seconds()
+
+    plot_data = []
+    current_fastest_overall_time = float('inf')
+    current_fastest_overall_driver = None
+
+    # Filter laps up to and including the current lap number
+    unique_lap_numbers = sorted(cleaned_laps['LapNumber'].unique())
+    for lap_num in unique_lap_numbers:
+        laps_up_to_current = cleaned_laps[cleaned_laps['LapNumber'] <= lap_num]
+
+        if not laps_up_to_current.empty:
+            # Find the index of the absolute fastest lap among all laps recorded so far
+            fastest_idx_so_far = laps_up_to_current['LapTimeSeconds'].idxmin()
+            fastest_row_so_far = laps_up_to_current.loc[fastest_idx_so_far]
+
+            # Check if this new fastest lap is an improvement over the current overall fastest
+            if fastest_row_so_far['LapTimeSeconds'] < current_fastest_overall_time:
+                current_fastest_overall_time = fastest_row_so_far['LapTimeSeconds']
+                current_fastest_overall_driver = fastest_row_so_far['Driver']
+
+        # Append the current overall fastest lap time and its associated driver for this lap_num
+        # Only add if current_fastest_overall_driver is not None (i.e., we found at least one lap)
+        if current_fastest_overall_driver is not None:
+            plot_data.append({
+                'LapNumber': lap_num,
+                'LapTimeSeconds': current_fastest_overall_time,
+                'Driver': current_fastest_overall_driver
+            })
+
+    # Create a DataFrame from the collected plot data
+    leading_laps_plot_df = pd.DataFrame(plot_data)
+
+    if leading_laps_plot_df.empty:
+        print("No valid lap data to plot after processing.")
+    else:
+        fig = go.Figure()
+
+        # Get unique drivers who held the leading lap time
+        unique_leading_drivers = leading_laps_plot_df['Driver'].unique()
+
+        for driver in unique_leading_drivers:
+            driver_laps_leading = leading_laps_plot_df[leading_laps_plot_df['Driver'] == driver]
+
+            # Add a trace for each driver, allowing for discontinuous segments
+            # by using connectgaps=False. This ensures one legend entry per driver
+            # and consistent coloring for all their leading segments.
+            fig.add_trace(go.Scatter(
+                x=driver_laps_leading['LapNumber'],
+                y=driver_laps_leading['LapTimeSeconds'],
+                mode='lines+markers',
+                name=driver, # This ensures a single legend entry per driver
+                hoverinfo='text',
+                text=[
+                    f"Lap: {int(row['LapNumber'])}<br>Driver: {row['Driver']}<br>Lap Time: {row['LapTimeSeconds']:.3f}s"
+                    for idx, row in driver_laps_leading.iterrows()
+                ],
+                connectgaps=False, # Crucial for showing discontinuous leading periods
+                showlegend=True
+            ))
+
+    grouped_track_status = _get_track_status_changes(laps, track_status)
+
+    # vertical lines for track status changes
+    for lap, lap_events in grouped_track_status:
+        line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+
+        fig.add_vline(
+            x=lap,
+            line_width=2,
+            line_dash="dash",
+            line_color=line_color, 
+            layer="above",
+        )
+
+        # scatter markers for each event
+        num_events = len(lap_events)
+        # vertical offset for each marker in the same lap
+        vertical_offsets = np.linspace(-0.2, 0.2, num_events) 
+        
+        # index of the first driver as a reference point for the vertical position of markers
+        if drivers.size > 0:
+            driver_y_index = fig.layout.yaxis.categoryarray.index(drivers[0]) if fig.layout.yaxis.categoryarray is not None else 0
+        else:
+            driver_y_index = 0 # Default to 0 if no drivers are found
+
+        for i, (index, row) in enumerate(lap_events.iterrows()):
+            event_color = definitions.track_status_colors.get(row['Message'], 'gray')
+
+            fig.add_trace(go.Scatter(
+                x=[row['Lap']],
+                y=[driver_y_index + vertical_offsets[i]], 
+                mode='markers',
+                marker=dict(
+                    size=10,
+                    color=event_color,
+                    symbol='circle', 
+                    line=dict(color='black', width=1)
+                ),
+                hoverinfo='text',
+                text=f"Track Status: {row['Message']}, Lap {row['Lap']}",
+                showlegend=False,
+            ))
+        
