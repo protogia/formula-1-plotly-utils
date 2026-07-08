@@ -13,6 +13,7 @@ from plotly.subplots import make_subplots
 from scipy.interpolate import interp1d
 from formula_1_plotly_utils import definitions
 
+
 _logger = get_logger(__package__)
 
 
@@ -1053,17 +1054,15 @@ def plot_lap_telemetry_comparison(
 
     available_columns = set(tel1.columns).intersection(set(tel2.columns))
     if metrics_to_plot is None:
-        potential_metrics = ['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']
-        metrics = [m for m in potential_metrics if m in available_columns]
+        metrics = [m for m in definitions.telemetry_metrics if m in available_columns]
     else:
         metrics = [m for m in metrics_to_plot if m in available_columns]
 
-    units = {'Speed': 'km/h', 'Throttle': '%', 'Brake': '%', 'RPM': 'RPM', 'nGear': 'Gear', 'DRS': 'Status'}
     color1, color2 = 'red', 'lightblue'
     max_dist = max(tel1['Distance'].max(), tel2['Distance'].max())
 
     for metric in metrics:
-        unit = units.get(metric, '')
+        unit = definitions.telemetry_metrics.get(metric, '')
         fig = make_subplots(rows=1, cols=2, column_widths=[0.4, 0.6], horizontal_spacing=0.05)
 
         fig.add_trace(go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f"{lap1_label} L{lap1_num}", line=dict(color=color1), legendgroup="l1"), row=1, col=2)
@@ -1124,3 +1123,5 @@ def plot_lap_telemetry_comparison(
         fig.update_layout(title=dict(text=f"{metric} Analysis: {comparison_title_suffix}", x=0.5, xanchor='center'), height=500, template="plotly_white", margin=dict(l=100, r=50, t=80, b=50), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
         
         return fig
+
+

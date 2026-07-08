@@ -1,6 +1,3 @@
-import pandas as pd
-
-
 track_status_colors = {
     "AllClear": "green",
     "Yellow": "yellow",
@@ -16,4 +13,13 @@ compound_colors = {
     'HARD': 'white',
     'INTERMEDIATE': 'green',
     'WET': 'blue'
+}
+
+telemetry_metrics = {
+    'Speed': 'km/h',
+    'Throttle': '%',
+    'Brake': '%', 
+    'RPM': 'RPM', 
+    'nGear': 'Gear', 
+    'DRS': 'Status'
 }
