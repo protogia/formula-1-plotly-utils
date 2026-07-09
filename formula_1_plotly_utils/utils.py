@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import pandas as pd
 from datetime import  datetime
-from typing import Optional
+from typing import Optional, List
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
@@ -423,7 +423,7 @@ def plot_weather_data(
 
 
 def plot_tyre_strategies(
-        drivers: list,
+        drivers: List,
         laps: pd.DataFrame,
         track_status: pd.DataFrame,
     ) -> 'plotly.graph_objects.Figure':
@@ -563,7 +563,7 @@ def plot_tyre_strategies(
 
 
 def plot_pitstop_durations(
-        choosen_drivers: list, 
+        choosen_drivers: List, 
         laps: pd.DataFrame, 
         track_status: pd.DataFrame
     ):
@@ -678,7 +678,7 @@ def plot_pitstop_durations(
 def plot_laptime_distribution_weatherdependent(
         laps: pd.DataFrame,
         session_start_time: datetime,
-        drivers: list,
+        drivers: List,
         weather_data: pd.DataFrame = None,
     ) -> pd.DataFrame:         
 
@@ -734,7 +734,7 @@ def plot_laptime_distribution_weatherdependent(
     return fig
 
 
-def plot_laptime_distribution_per_compound(laps: pd.DataFrame, drivers: list, results: pd.DataFrame):
+def plot_laptime_distribution_per_compound(laps: pd.DataFrame, drivers: List, results: pd.DataFrame):
     filtered_laps = laps[laps['Driver'].isin(drivers)].copy()
     filtered_laps['LapTimeSeconds'] = filtered_laps['LapTime'].dt.total_seconds()
 
@@ -757,7 +757,7 @@ def plot_laptime_distribution_per_compound(laps: pd.DataFrame, drivers: list, re
     return fig
 
 
-def plot_laptime_distribution_per_qualifyinground(laps: pd.DataFrame, drivers: list, results: pd.DataFrame):
+def plot_laptime_distribution_per_qualifyinground(laps: pd.DataFrame, drivers: List, results: pd.DataFrame):
     filtered_laps = laps[laps['Driver'].isin(drivers)].copy()
     
     # identify the border of qualifying rounds
@@ -884,7 +884,7 @@ def _get_track_status_changes(
     
 
 
-def plot_leading_laptimes(drivers: list, laps: pd.DataFrame, track_status: pd.DataFrame):
+def plot_leading_laptimes(drivers: List, laps: pd.DataFrame, track_status: pd.DataFrame):
     # Ensure 'LapTime' is in timedelta format
     if 'LapTime' not in laps.columns or not pd.api.types.is_timedelta64_dtype(laps['LapTime']):
         laps['LapTime'] = pd.to_timedelta(laps['LapTime'])
