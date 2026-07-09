@@ -44,15 +44,15 @@ def _enable_fastf1_color_scheme():
             paper_bgcolor=bg_color,
             plot_bgcolor=plot_bg_color,
             font=dict(
-                family="sans-serif", # Gravity is usually not standard on all systems
+                family="sans-serif",
                 color=text_color,
                 size=14
             ),
-            # Title styling (matches axes.titlesize 19 and titlepad 12)
+
             title=dict(
                 font=dict(size=19, color=text_color),
                 pad=dict(t=12),
-                x=0.5, # Centered title is often cleaner in Plotly
+                x=0.5,
                 xanchor='center'
             ),
             xaxis=dict(
@@ -60,7 +60,7 @@ def _enable_fastf1_color_scheme():
                 linecolor=grid_color,
                 zerolinecolor=grid_color,
                 showline=True,
-                tickfont=dict(color='#f1f2f3'), # Matches xtick.color
+                tickfont=dict(color='#f1f2f3'), 
                 titlefont=dict(color='#f1f2f3'),
                 mirror=True # Matches the "box" look of MPL
             ),
@@ -73,14 +73,13 @@ def _enable_fastf1_color_scheme():
                 titlefont=dict(color='#f1f2f3'),
                 mirror=True
             ),
-            # Legend styling (matches (0.1, 0.1, 0.1, 0.7))
             legend=dict(
                 bgcolor='rgba(25, 25, 25, 0.7)',
                 bordercolor='rgba(25, 25, 25, 0.9)',
                 borderwidth=1,
                 font=dict(color=text_color)
             ),
-            # The line colors
+            # line colors
             colorway=_COLOR_PALETTE,
             # Plotly specific: Ensure the hover label matches the theme
             hoverlabel=dict(
@@ -1066,8 +1065,13 @@ def plot_lap_telemetry_comparison(
         unit = definitions.telemetry_metrics.get(metric, '')
         fig = make_subplots(rows=1, cols=2, column_widths=[0.4, 0.6], horizontal_spacing=0.05)
 
-        fig.add_trace(go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f"{lap1_label} L{lap1_num}", line=dict(color=color1), legendgroup="l1"), row=1, col=2)
-        fig.add_trace(go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f"{lap2_label} L{lap2_num}", line=dict(color=color2), legendgroup="l2"), row=1, col=2)
+        fig.add_trace(go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f"{lap1_label} L{lap1_num}", line=dict(color=color1), legendgroup="l1"),
+        hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>', 
+        row=1, col=2)
+
+        fig.add_trace(go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f"{lap2_label} L{lap2_num}", line=dict(color=color2), legendgroup="l2"),
+        hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>',
+        row=1, col=2)
 
         # highlight
         if highlight_distance is not None:
@@ -1109,8 +1113,9 @@ def plot_lap_telemetry_comparison(
             mode='lines+markers',
             name='Track Map',
             showlegend=True,
-            marker=dict(size=4, color=diff, colorscale='RdBu', reversescale=True, cmin=-max_diff, cmax=max_diff, cmid=0, showscale=True, colorbar=dict(thickness=15, x=-0.15, title=dict(text=f"Higher {metric}", side='top'), tickvals=[-max_diff, 0, max_diff], ticktext=[f"{lap2_label} L{lap2_num}", "Equal", f"{lap1_label} L{lap1_num}"]))
-        ), row=1, col=1)
+            marker=dict(size=4, color=diff, colorscale='RdBu', reversescale=True, cmin=-max_diff, cmax=max_diff, cmid=0, showscale=True, colorbar=dict(thickness=15, x=-0.15, title=dict(text=f"Higher {metric}", side='top'), tickvals=[-max_diff, 0, max_diff], ticktext=[f"{lap2_label} L{lap2_num}", "Equal", f"{lap1_label} L{lap1_num}"]))), 
+            hovertemplate=f'{metric} Difference: %{{marker.color:.2f}} {unit}<extra></extra>',
+            row=1, col=1)
 
         if circuit_info is not None:
             for _, corner in circuit_info.corners.iterrows():
