@@ -994,6 +994,7 @@ def plot_leading_laptimes(drivers: List, laps: pd.DataFrame, track_status: pd.Da
                 text=f"Track Status: {row['Message']}, Lap {row['Lap']}",
                 showlegend=False,
             ))
+    return fig
         
 
 
