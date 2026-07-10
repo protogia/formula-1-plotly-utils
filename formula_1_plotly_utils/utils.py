@@ -859,8 +859,40 @@ def plot_best_laptime(results: pd.DataFrame, drivers: list, criteria: str=None):
     return fig
 
 
-def plot_driver_position_per_lap():
-    pass
+def plot_driver_position_per_lap(
+        laps: pd.DataFrame,
+        drivers: pd.DataFrame    
+    ):
+
+    fig = go.Figure()
+
+    for driver in drivers:
+        drv_laps = laps.pick_drivers(driver)
+
+        if not drv_laps.empty:
+            abb = drv_laps['Driver'].iloc[0]
+            fig.add_trace(go.Scatter(
+                x=drv_laps['LapNumber'],
+                y=drv_laps['Position'],
+                mode='lines+markers',
+                name=abb,
+                hoverinfo='text',
+                text=[f'Driver: {abb}<br>Lap: {lap}<br>Position: {pos}' for lap, pos in zip(drv_laps['LapNumber'], drv_laps['Position'])]
+            ))
+
+    fig.update_layout(
+        title='Driver Positions Per Lap (Grand Prix Race)',
+        xaxis_title='Lap Number',
+        yaxis_title='Position',
+        yaxis=dict(
+            autorange='reversed', # P1 at the top
+        ),
+        legend_title='Driver'
+    )
+
+    return fig
+
+
 
 def _get_track_status_changes(
         laps: pd.DataFrame,
@@ -951,48 +983,6 @@ def plot_leading_laptimes(drivers: List, laps: pd.DataFrame, track_status: pd.Da
                 showlegend=True
             ))
 
-    grouped_track_status = _get_track_status_changes(laps, track_status)
-
-    # vertical lines for track status changes
-    for lap, lap_events in grouped_track_status:
-        line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
-
-        fig.add_vline(
-            x=lap,
-            line_width=2,
-            line_dash="dash",
-            line_color=line_color, 
-            layer="above",
-        )
-
-        # scatter markers for each event
-        num_events = len(lap_events)
-        # vertical offset for each marker in the same lap
-        vertical_offsets = np.linspace(-0.2, 0.2, num_events) 
-        
-        # index of the first driver as a reference point for the vertical position of markers
-        if drivers.size > 0:
-            driver_y_index = fig.layout.yaxis.categoryarray.index(drivers[0]) if fig.layout.yaxis.categoryarray is not None else 0
-        else:
-            driver_y_index = 0 # Default to 0 if no drivers are found
-
-        for i, (index, row) in enumerate(lap_events.iterrows()):
-            event_color = definitions.track_status_colors.get(row['Message'], 'gray')
-
-            fig.add_trace(go.Scatter(
-                x=[row['Lap']],
-                y=[driver_y_index + vertical_offsets[i]], 
-                mode='markers',
-                marker=dict(
-                    size=10,
-                    color=event_color,
-                    symbol='circle', 
-                    line=dict(color='black', width=1)
-                ),
-                hoverinfo='text',
-                text=f"Track Status: {row['Message']}, Lap {row['Lap']}",
-                showlegend=False,
-            ))
     return fig
         
 
@@ -1131,3 +1121,176 @@ def plot_lap_telemetry_comparison(
         return fig
 
 
+
+def plot_qualifying_results(
+    results: pd.DataFrame,
+    qualifying_session: str = 'Q3',
+    show_gaps: bool = True,
+    custom_title: str = None,
+    highlight_driver: str = None,
+    sort_by: str = 'time') -> go.Figure:
+    """
+    Plot qualifying results from a FastF1 session.
+    
+    Parameters:
+    -----------
+    session : fastf1.core.Session
+        The FastF1 session object containing qualifying data.
+    qualifying_session : str, optional
+        Which qualifying session to plot ('Q1', 'Q2', 'Q3'). Default is 'Q3'.
+    show_gaps : bool, optional
+        Whether to show time gaps to pole position. Default is True.
+    custom_title : str, optional
+        Custom title for the plot. If None, auto-generated.
+    highlight_driver : str, optional
+        Driver code to highlight (e.g., '{driver1_code}'). If None, no highlighting.
+    sort_by : str, optional
+        Sort results by 'time' (fastest first) or 'position' (grid order). Default is 'time'.
+    
+    Returns:
+    --------
+    go.Figure
+        A Plotly figure object.
+    """
+    
+    # Filter for drivers with a time in the requested qualifying session
+    time_col = f'{qualifying_session}Time'
+    
+    if time_col not in results.columns:
+        print(f"Qualifying session '{qualifying_session}' not found in results.")
+        return
+    
+    # Remove drivers with no time in this session
+    results = results[results[time_col].notna()].copy()
+    
+    if results.empty:
+        print(f"No qualifying times available for {qualifying_session}.")
+        return
+    
+    # Convert time to milliseconds for better display
+    results['TimeMs'] = results[time_col].dt.total_seconds() * 1000
+    
+    # Calculate gaps to pole position (fastest time)
+    pole_time_ms = results['TimeMs'].min()
+    results['GapToPolems'] = results['TimeMs'] - pole_time_ms
+    results['GapToPole'] = results['GapToPolems'] / 1000  # Convert back to seconds for display
+    
+    # Sort
+    if sort_by == 'time':
+        results = results.sort_values('TimeMs')
+    else:
+        results = results.sort_values('GridPosition')
+    
+    # Get driver colors
+    results['DriverColor'] = results['DriverNumber'].apply(
+        lambda x: session.get_driver(x)['TeamColor'] if session.get_driver(x) else '#ffffff'
+    )
+    
+    # Create driver labels
+    results['DriverLabel'] = results['DriverCode'] + ' (' + results['TeamName'] + ')'
+    
+    # Highlight logic
+    results['MarkerSize'] = 8
+    results.loc[results['DriverCode'] == highlight_driver, 'MarkerSize'] = 12
+    
+    # Build hover text
+    hover_texts = []
+    for _, row in results.iterrows():
+        time_str = row[time_col].strftime('%M:%S.%f')[:-3]
+        gap_str = f"<br>Gap to pole: +{row['GapToPole']:.3f}s" if show_gaps else ""
+        hover_text = (
+            f"{row['DriverCode']} ({row['TeamName']})<br>"
+            f"Qualifying: {time_str}<br>"
+            f"Grid Position: {int(row['GridPosition'])}"
+            f"{gap_str}"
+        )
+        hover_texts.append(hover_text)
+    
+    results['HoverText'] = hover_texts
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add bars
+    fig.add_trace(go.Bar(
+        y=results['DriverLabel'],
+        x=results['TimeMs'],
+        orientation='h',
+        marker=dict(
+            color=results['DriverColor'],
+            size=results['MarkerSize']
+        ),
+        customdata=results['HoverText'],
+        hovertemplate='%{customdata}<extra></extra>',
+        showlegend=False,
+        name='Qualifying Time'
+    ))
+    
+    # Title
+    if custom_title:
+        title = custom_title
+    else:
+        title = f"{session.event['EventName']} {session.event['Year']} - Qualifying {qualifying_session} Results"
+    
+    # Layout
+    fig.update_layout(
+        title=dict(text=title, x=0.5, xanchor='center'),
+        xaxis_title="Qualifying Time (milliseconds)",
+        yaxis_title="Driver",
+        height=max(600, len(results) * 25),
+        template="plotly_white",
+        margin=dict(l=200, r=50, t=100, b=50),
+        showlegend=False
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgrey')
+    fig.update_yaxes(showgrid=False)
+    
+    return fig
+
+
+
+def plot_gap_between_d1_d2(
+        laps: pd.DataFrame,
+        driver1_code: str,
+        driver2_code: str,
+        event_lap: int,
+        event_label: str
+    ):
+    # Filter laps for both drivers
+    d1_laps = laps.pick_driver(driver1_code)[['LapNumber', 'Time']]
+    d2_laps = laps.pick_driver(driver2_code)[['LapNumber', 'Time']]
+
+    d1_laps['TotalTime'] = d1_laps['Time'].dt.total_seconds()
+    d2_laps['TotalTime'] = d2_laps['Time'].dt.total_seconds()
+
+    # merge to align lap numbers
+    gap_df = pd.merge(d1_laps, d2_laps, on='LapNumber', suffixes=(f'_{driver1_code}', f'_{driver2_code}'))
+
+    # driver2_code is chasing driver1_code, a positive value indicates d2 is behind d1
+    gap_df['Gap'] = gap_df[f'TotalTime_{driver2_code}'] - gap_df[f'TotalTime_{driver1_code}']
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=gap_df['LapNumber'],
+        y=gap_df['Gap'],
+        mode='lines+markers',
+        name=f'Gap: {driver2_code} to {driver1_code}',
+        fill='tozeroy'
+    ))
+
+    fig.update_layout(
+        title=f"The Hunt: Gap between {driver1_code} and {driver2_code}",
+        xaxis_title="Lap Number",
+        yaxis_title="Gap (Seconds)",
+    )
+
+    if event_lap:
+        fig.add_shape(dict(
+            type="line", x0=event_lap, x1=event_lap, y0=gap_df['Gap'].min(), y1=gap_df['Gap'].max(),
+            line=dict(color="red", dash="dash")
+        ))
+        if event_label:
+            fig.add_annotation(x=event_lap, y=gap_df['Gap'].max(), text=event_label, showarrow=True)
+
+    return fig
