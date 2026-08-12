@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import pandas as pd
 from datetime import  datetime
-from typing import Optional, List
+from typing import Optional, List, Sequence, Literal
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
