@@ -11,6 +11,7 @@ from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.logger import get_logger
 from plotly.subplots import make_subplots
 from scipy.interpolate import interp1d
+from scipy.signal import savgol_filter
 from formula_1_plotly_utils import definitions
 
 
