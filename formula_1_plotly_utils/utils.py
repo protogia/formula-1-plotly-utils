@@ -96,87 +96,271 @@ def _enable_fastf1_color_scheme():
 ################################################
 # utils
 ################################################
+def _smooth_series(s: pd.Series, window: int = 15, polyorder: int = 2) -> np.ndarray:
+    """Safely applies a Savitzky-Golay filter to smooth discrete telemetry noise: https://en.wikipedia.org/wiki/Savitzky%E2%80%93Golay_filter"""
+    arr = s.to_numpy(dtype=float)
+    n = len(arr)
+    if n < 5:
+        return arr
+    w = min(window, n)
+    if w % 2 == 0:
+        w -= 1
+    if w < 3:
+        return arr
+    p = min(polyorder, w - 1)
+    return savgol_filter(arr, window_length=w, polyorder=p)
+
+
+def _compute_telemetry_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """Computes metrics for speed, lateral G, longitudinal G, and elevation gradient."""
+    df = df.copy()
+
+    # Map columns safely regardless of case
+    col_map = {col.lower(): col for col in df.columns}
+    
+    speed_col = col_map.get('speed', 'Speed')
+    x_col = col_map.get('x', 'X')
+    y_col = col_map.get('y', 'Y')
+    z_col = col_map.get('z', 'Z')
+
+    # Convert units
+    # FastF1 X, Y, Z coordinates are in decimeters -> convert to meters (/ 10.0)
+    # Speed is in km/h -> convert to m/s (/ 3.6)
+    speed_kmh = df[speed_col].astype(float)
+    v_ms = speed_kmh / 3.6
+    
+    x_m = df[x_col].astype(float) / 10.0
+    y_m = df[y_col].astype(float) / 10.0
+    z_m = df[z_col].astype(float) / 10.0 if z_col in df.columns else np.zeros(len(df))
+
+    # time delta (dt in seconds)
+    if 'Time' in df.columns and pd.api.types.is_timedelta64_dtype(df['Time']):
+        t_sec = df['Time'].dt.total_seconds().to_numpy()
+    elif 'Date' in df.columns:
+        t_sec = df['Date'].diff().dt.total_seconds().fillna(0.1).cumsum().to_numpy()
+    else:
+        print("Use Fallback: assume 10Hz")
+        t_sec = np.arange(len(df)) * 0.1  
+
+    dt = np.gradient(t_sec)
+    dt = np.where(dt <= 0.001, 0.1, dt)  # Prevent division by microscopic dt steps
+
+    # 4. Smooth coordinates and speed to filter out GPS positioning jitter
+    x_smooth = _smooth_series(x_m, window=21, polyorder=2)
+    y_smooth = _smooth_series(y_m, window=21, polyorder=2)
+    z_smooth = _smooth_series(z_m, window=21, polyorder=2)
+    v_smooth = _smooth_series(v_ms, window=15, polyorder=2)
+
+    # 5. Longitudinal G-Force: a_lon = (1/g) * (dv / dt)
+    dv_dt = np.gradient(v_smooth, t_sec)
+    lon_g = dv_dt / 9.81
+
+    # 6. Lateral G-Force: a_lat = (1/g) * v * |d_heading / dt|
+    dx = np.gradient(x_smooth, t_sec)
+    dy = np.gradient(y_smooth, t_sec)
+    heading = np.unwrap(np.arctan2(dy, dx))
+    heading_smooth = _smooth_series(pd.Series(heading), window=15, polyorder=2)
+    dheading_dt = np.gradient(heading_smooth, t_sec)
+    
+    lat_g = (v_smooth * np.abs(dheading_dt)) / 9.81
+    # Zero out lateral G at low speeds (< 30 km/h) where heading flips randomly
+    lat_g = np.where(speed_kmh < 30.0, 0.0, lat_g)
+
+    # 7. Elevation Gradient (%): (dz / d_distance) * 100
+    dz = np.gradient(z_smooth)
+    dist_step = np.sqrt(np.gradient(x_smooth)**2 + np.gradient(y_smooth)**2)
+    gradient_pct = np.where(dist_step > 0.05, (dz / dist_step) * 100.0, 0.0)
+
+    # Assign calculated metrics
+    df['speed'] = speed_kmh
+    df['elevation'] = gradient_pct
+    df['lat_g'] = np.clip(lat_g, 0.0, 6.5)
+    df['lon_g'] = np.clip(lon_g, -6.5, 6.5)
+    return df
+
 
 def plot_track(
-        position: pd.DataFrame,
-        circuit_info: Optional['fastf1.mvapi.CircuitInfo'] = None,
-        reference_altitude: int = 0
-    ) -> 'plotly.graph_objects.Figure': 
-    """Plot the track layout with elevation markers and corner annotations 
-    using Plotly.
+    position: pd.DataFrame,
+    circuit_info: Optional['fastf1.mvapi.CircuitInfo'] = None,
+    reference_altitude: int = 0,
+    metrics: Sequence[Literal['elevation', 'speed', 'lat_g', 'lon_g']] = ('elevation',),
+    all_telemetry: Optional[pd.DataFrame] = None
+) -> go.Figure:
+    """Plot the track layout with customizable metrics using subplots (max 2 columns)."""
+    if isinstance(metrics, str):
+        metrics = [metrics]
 
-    The plot is interactive, allowing for zooming and hovering to see 
-    specific altitude gradients and corner details.
+    num_metrics = len(metrics)
+    cols = min(2, num_metrics)
+    rows = int(np.ceil(num_metrics / cols))
 
-    Parameters:
-        position: Dataframe containing 'X', 'Y', and 'Z' coordinates. 
-            Usually obtained from :func:`fastf1.core.Telemetry.get_pos_data`.
-        circuit_info (Optional): Circuit information containing corner 
-            locations and track rotation.
-        reference_altitude (Optional): An offset value added to the 'Z' coordinate 
-            (useful for normalizing altitude to sea level or track minimum).
+    # Pre-process telemetry data once
+    if all_telemetry is not None:
+        group_cols = [c for c in ['Driver', 'LapNumber'] if c in all_telemetry.columns]
+        if group_cols:
+            processed_chunks = [_compute_telemetry_metrics(group) for _, group in all_telemetry.groupby(group_cols)]
+            tel_df = pd.concat(processed_chunks)
+        else:
+            tel_df = _compute_telemetry_metrics(all_telemetry)
+    else:
+        tel_df = _compute_telemetry_metrics(position)
 
-    Returns:
-        plotly.graph_objects.Figure: An interactive Plotly figure object.
-    """
+    # Rotate track map once
+    track = position[['X', 'Y']].to_numpy()
+    if circuit_info and hasattr(circuit_info, 'rotation'):
+        track_angle = circuit_info.rotation / 180 * np.pi
+        rotated_track = _rotate(track, angle=track_angle)
+    else:
+        track_angle = 0
+        rotated_track = track
 
-    # rotate track
-    track = position.loc[:, ('X', 'Y')].to_numpy()
-    track_angle = circuit_info.rotation / 180 * np.pi
-    rotated_track = _rotate(track, angle=track_angle)
+    titles = [m.replace('_', ' ').title() for m in metrics]
+    
+    # Calculate spacing offsets so colorbars don't overlap in subplots
+    horizontal_spacing = 0.15 if cols > 1 else 0.1
+    vertical_spacing = 0.12 if rows > 1 else 0.1
 
-    # calc gradient
-    altitude_meters = position['Z'].values + reference_altitude
-    altitude_diff = position['Z'].diff().fillna(0)
-
-    delta_x = position['X'].diff().fillna(0)
-    delta_y = position['Y'].diff().fillna(0)
-    distances = np.sqrt(delta_x**2 + delta_y**2)
-    altitude_gradient = np.where(distances > 0, (altitude_diff / distances) * 100, 0)
-
-    # scatter plot with color scale based on the altitude gradient
-    fig = go.Figure(data=go.Scatter(
-        x=rotated_track[:, 0],
-        y=rotated_track[:, 1],
-        mode='lines+markers',
-        marker=dict(
-            size=5,
-            color=altitude_gradient,
-            colorscale='Plasma',
-            colorbar=dict(title='Altitude Gradient'),
-            opacity=0.8
-        ),
-        line=dict(
-                color=_COLOR_PALETTE[0],
-                width=4
-            ),
-        hoverinfo='text',
-        text=[f'Altitude Gradient: {grad:.2f}%' for grad in altitude_gradient]
-    ))
-
-    if circuit_info:
-        # add corner information as annotations
-        for _, corner in circuit_info.corners.iterrows():
-            # Rotate the center of the corner equivalently to the rest of the track map
-            txt = f"{corner['Number']}{corner['Letter']}"
-            track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
-            fig.add_annotation(
-                x=track_x,
-                y=track_y,
-                text=txt,
-                showarrow=False, # Do not show arrow
-                bgcolor="grey",
-                font=dict(
-                    color="white",
-                    size=10
-                )
-            )
-
-    fig.update_layout(
-        yaxis=dict(scaleanchor="x", scaleratio=1), 
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis_showgrid=False, yaxis_zeroline=False, yaxis_showticklabels=False,
+    fig = make_subplots(
+        rows=rows, 
+        cols=cols, 
+        subplot_titles=titles,
+        horizontal_spacing=horizontal_spacing,
+        vertical_spacing=vertical_spacing
     )
+
+    for idx, metric in enumerate(metrics):
+        r = idx // cols + 1
+        c = idx % cols + 1
+        m_key = metric.lower()
+
+        # Retrieve metric values
+        if all_telemetry is not None:
+            if 'Distance' in position.columns and 'Distance' in tel_df.columns:
+                ref_dist = position['Distance'].values
+                bins = np.concatenate([[-np.inf], (ref_dist[:-1] + ref_dist[1:]) / 2, [np.inf]])
+                tel_df['dist_bin'] = pd.cut(tel_df['Distance'], bins=bins, labels=False)
+                
+                avg_series = tel_df.groupby('dist_bin')[m_key].mean()
+                metric_values = avg_series.reindex(range(len(ref_dist))).bfill().ffill().values
+            else:
+                metric_values = tel_df[m_key].values[:len(position)]
+        else:
+            metric_values = tel_df[m_key].values
+
+        max_abs_val = float(np.nanmax(np.abs(metric_values))) if len(metric_values) > 0 else 1.0
+        min_val = float(np.nanmin(metric_values)) if len(metric_values) > 0 else 0.0
+        max_val = float(np.nanmax(metric_values)) if len(metric_values) > 0 else 1.0
+
+        # Calculate exact colorbar coordinates per subplot cell
+        col_width = (1 - (cols - 1) * horizontal_spacing) / cols
+        row_height = (1 - (rows - 1) * vertical_spacing) / rows
+        x_pos = (c - 1) * (col_width + horizontal_spacing) + col_width
+        y_pos = 1 - (r - 1) * (row_height + vertical_spacing) - (row_height / 2)
+
+        marker_opts = {
+            'size': 5,
+            'color': metric_values,
+            'opacity': 0.85,
+            'colorbar': dict(
+                len=row_height * 0.85,
+                x=x_pos + 0.01,
+                y=y_pos,
+                thickness=12
+            )
+        }
+
+        if m_key == 'lon_g':
+            bound = max(max_abs_val, 1.0)
+            marker_opts.update({
+                'colorscale': 'RdBu_r',
+                'cmid': 0.0,
+                'cmin': -bound,
+                'cmax': bound,
+            })
+            marker_opts['colorbar']['title'] = 'Longitudinal G (g)'
+            hover_text = [f"Lon G: {v:+.2f}g" for v in metric_values]
+
+        elif m_key == 'elevation':
+            bound = max(max_abs_val, 0.5)
+            marker_opts.update({
+                'colorscale': 'Spectral_r',
+                'cmid': 0.0,
+                'cmin': -bound,
+                'cmax': bound,
+            })
+            marker_opts['colorbar']['title'] = 'Elevation Gradient (%)'
+            hover_text = [f"Gradient: {v:+.2f}%" for v in metric_values]
+
+        elif m_key == 'lat_g':
+            marker_opts.update({
+                'colorscale': 'Magma',
+                'cmin': 0.0,
+                'cmax': max(max_val, 1.0),
+            })
+            marker_opts['colorbar']['title'] = 'Lateral G (g)'
+            hover_text = [f"Lat G: {v:.2f}g" for v in metric_values]
+
+        else:  # 'speed'
+            marker_opts.update({
+                'colorscale': 'Turbo',
+                'cmin': min_val,
+                'cmax': max_val,
+            })
+            marker_opts['colorbar']['title'] = 'Speed (km/h)'
+            hover_text = [f"Speed: {v:.1f} km/h" for v in metric_values]
+
+        fig.add_trace(
+            go.Scatter(
+                x=rotated_track[:, 0],
+                y=rotated_track[:, 1],
+                mode='lines+markers',
+                marker=marker_opts,
+                line=dict(color=_COLOR_PALETTE[0], width=4),
+                hoverinfo='text',
+                text=hover_text,
+                showlegend=False
+            ),
+            row=r, col=c
+        )
+
+        # Add corner annotations
+        if circuit_info and hasattr(circuit_info, 'corners'):
+            for _, corner in circuit_info.corners.iterrows():
+                txt = f"{corner['Number']}{corner['Letter']}"
+                track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
+                fig.add_annotation(
+                    x=track_x,
+                    y=track_y,
+                    text=txt,
+                    showarrow=False,
+                    bgcolor="grey",
+                    font=dict(color="white", size=10),
+                    row=r, col=c
+                )
+
+        # Configure aspect ratio for 1:1 mapping scale
+        axis_num = (r - 1) * cols + c
+        
+        # Plotly layout keys: xaxis, yaxis, xaxis2, yaxis2, etc.
+        x_axis_key = f"xaxis{axis_num}" if axis_num > 1 else "xaxis"
+        y_axis_key = f"yaxis{axis_num}" if axis_num > 1 else "yaxis"
+        
+        # Valid scaleanchor target values: x, x2, x3, etc.
+        anchor_target = f"x{axis_num}" if axis_num > 1 else "x"
+
+        fig.layout[y_axis_key].update(
+            scaleanchor=anchor_target, 
+            scaleratio=1,
+            showgrid=False, 
+            zeroline=False, 
+            showticklabels=False
+        )
+        fig.layout[x_axis_key].update(
+            showgrid=False, 
+            zeroline=False, 
+            showticklabels=False
+        )
+
     return fig
 
 
