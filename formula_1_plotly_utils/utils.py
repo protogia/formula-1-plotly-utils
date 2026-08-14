@@ -1180,130 +1180,196 @@ def plot_lap_telemetry_comparison(
     driver1_lap: str,
     driver2_lap: str,
     metrics_to_plot: List = None,
-    highlight_distance=None,
+    highlight_distance = None,
     highlight_label: str = None,
-    custom_title: str = None):
-
-    # filter choosen lap
+    custom_title: str = None
+):
+    # filter chosen laps
     if driver1_lap == 'fastest':
-        driver1_laps_filtered = laps.pick_driver(driver1_code)
+        driver1_laps_filtered = laps.pick_drivers(driver1_code)
         lap1 = driver1_laps_filtered.loc[driver1_laps_filtered['LapTime'].idxmin()] if not driver1_laps_filtered.empty else pd.Series()
     else:
-        lap1 = laps.pick_driver(driver1_code).pick_lap(driver1_lap)
+        lap1 = laps.pick_drivers(driver1_code).pick_lap(int(driver1_lap) if str(driver1_lap).isdigit() else driver1_lap)
 
     if driver2_lap == 'fastest':
-        driver2_laps_filtered = laps.pick_driver(driver2_code)
+        driver2_laps_filtered = laps.pick_drivers(driver2_code)
         lap2 = driver2_laps_filtered.loc[driver2_laps_filtered['LapTime'].idxmin()] if not driver2_laps_filtered.empty else pd.Series()
     else:
-        lap2 = laps.pick_driver(driver2_code).pick_lap(driver2_lap)
+        lap2 = laps.pick_drivers(driver2_code).pick_lap(int(driver2_lap) if str(driver2_lap).isdigit() else driver2_lap)
 
     if lap1.empty or lap2.empty:
         print(f"One or both laps are missing or empty for Driver 1 ({driver1_code}, Lap {driver1_lap}) or Driver 2 ({driver2_code}, Lap {driver2_lap}).")
-        return
+        return None
 
     lap1_label = driver1_code
     lap2_label = driver2_code
 
-    # telemetry data
+    # telemetry & position data
     try:
         tel1 = lap1.get_telemetry()
         tel2 = lap2.get_telemetry()
+        pos1 = lap1.get_pos_data()
+        
         if len(tel1) == 0 or len(tel2) == 0:
             raise ValueError("Telemetry is empty for one of the laps.")
     except Exception as e:
-        print(f"Could not retrieve telemetry for {lap1_label} L{int(lap1['LapNumber'])} or {lap2_label} L{int(lap2['LapNumber'])}: {e}")
-        return
+        print(f"Could not retrieve telemetry for {lap1_label} or {lap2_label}: {e}")
+        return None
 
-    # rotate annoations to match track-map
+    # Track rotation angle
     track_angle = circuit_info.rotation / 180 * np.pi if circuit_info is not None else 0
 
     lap1_num = int(lap1['LapNumber']) if 'LapNumber' in lap1 else "N/A"
     lap2_num = int(lap2['LapNumber']) if 'LapNumber' in lap2 else "N/A"
 
-    if custom_title:
-        comparison_title_suffix = custom_title
-    else:
-        comparison_title_suffix = f"{lap1_label} (Lap {lap1_num}) vs {lap2_label} (Lap {lap2_num})"
-
-    pos1 = lap1.get_pos_data()
+    comparison_title_suffix = custom_title if custom_title else f"{lap1_label} (Lap {lap1_num}) vs {lap2_label} (Lap {lap2_num})"
 
     available_columns = set(tel1.columns).intersection(set(tel2.columns))
+    
+    # Ensure fallback metrics if definition module isn't loaded
     if metrics_to_plot is None:
-        metrics = [m for m in definitions.telemetry_metrics if m in available_columns]
+        metrics = [m for m in ['Speed', 'Throttle', 'Brake', 'RPM', 'nGear'] if m in available_columns]
     else:
         metrics = [m for m in metrics_to_plot if m in available_columns]
 
     color1, color2 = 'red', 'lightblue'
     max_dist = max(tel1['Distance'].max(), tel2['Distance'].max())
+    
+    figures = []
 
     for metric in metrics:
-        unit = definitions.telemetry_metrics.get(metric, '')
+        unit = definitions.telemetry_metrics.get(metric, '') if 'definitions' in globals() else ''
         fig = make_subplots(rows=1, cols=2, column_widths=[0.4, 0.6], horizontal_spacing=0.05)
 
-        fig.add_trace(go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f"{lap1_label} L{lap1_num}", line=dict(color=color1), legendgroup="l1"),
-        hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>', 
-        row=1, col=2)
+        # FIXED: hovertemplate is now properly INSIDE go.Scatter()
+        fig.add_trace(
+            go.Scatter(
+                x=tel1['Distance'], 
+                y=tel1[metric], 
+                mode='lines', 
+                name=f"{lap1_label} L{lap1_num}", 
+                line=dict(color=color1), 
+                legendgroup="l1",
+                hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>'
+            ), 
+            row=1, col=2
+        )
 
-        fig.add_trace(go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f"{lap2_label} L{lap2_num}", line=dict(color=color2), legendgroup="l2"),
-        hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>',
-        row=1, col=2)
+        fig.add_trace(
+            go.Scatter(
+                x=tel2['Distance'], 
+                y=tel2[metric], 
+                mode='lines', 
+                name=f"{lap2_label} L{lap2_num}", 
+                line=dict(color=color2), 
+                legendgroup="l2",
+                hovertemplate=f'Distance: %{{x:.1f}} m<br>{metric}: %{{y:.2f}} {unit}<extra></extra>'
+            ), 
+            row=1, col=2
+        )
 
-        # highlight
+        # Highlight distance line
         if highlight_distance is not None:
-            fig.add_trace(go.Scatter(
-                x=[highlight_distance, highlight_distance],
-                y=[tel1[metric].min(), tel1[metric].max()],
-                mode='lines',
-                line=dict(color='green', width=2, dash='dot'),
-                name=highlight_label if highlight_label else 'Highlighted Distance',
-                showlegend=True
-            ), row=1, col=2)
+            fig.add_trace(
+                go.Scatter(
+                    x=[highlight_distance, highlight_distance],
+                    y=[tel1[metric].min(), tel1[metric].max()],
+                    mode='lines',
+                    line=dict(color='green', width=2, dash='dot'),
+                    name=highlight_label if highlight_label else 'Highlighted Distance',
+                    showlegend=True
+                ), 
+                row=1, col=2
+            )
 
-        # match track annotations to telemetry-data based on time an position
-        if circuit_info is not None:
+        # Track corner annotations on telemetry plot
+        if circuit_info is not None and 'Date' in pos1.columns and not pos1.empty:
             for _, corner in circuit_info.corners.iterrows():
-                # ensure Datecolumn exists in pos1, or use Time for telemetry alignment
-                if 'Date' in pos1.columns and not pos1.empty: # Check if pos1 is not empty
-                    dist_sq = (pos1['X'] - corner['X'])**2 + (pos1['Y'] - corner['Y'])**2
-                    if not dist_sq.empty:
-                        closest_idx = dist_sq.idxmin()
-                        closest_time = pos1.loc[closest_idx, 'Date']
-                        # find the closest telemetry point by Date
-                        tel_idx = (tel1['Date'] - closest_time).abs().idxmin()
-                        corner_dist = tel1.loc[tel_idx, 'Distance']
-                        fig.add_vline(x=corner_dist, line_width=1, line_dash="dash", line_color="grey", annotation_text=f"C-{corner['Number']}{corner['Letter']}", annotation_position="top right", row=1, col=2)
-                else:
-                    print("Position data 'Date' column not available or position data is empty for corner annotation.")
+                dist_sq = (pos1['X'] - corner['X'])**2 + (pos1['Y'] - corner['Y'])**2
+                if not dist_sq.empty:
+                    closest_idx = dist_sq.idxmin()
+                    closest_time = pos1.loc[closest_idx, 'Date']
+                    tel_idx = (tel1['Date'] - closest_time).abs().idxmin()
+                    corner_dist = tel1.loc[tel_idx, 'Distance']
+                    fig.add_vline(
+                        x=corner_dist, 
+                        line_width=1, 
+                        line_dash="dash", 
+                        line_color="grey", 
+                        annotation_text=f"C-{corner['Number']}{corner['Letter']}", 
+                        annotation_position="top right", 
+                        row=1, col=2
+                    )
 
+        # Interpolation & Difference calculation
         interp_func = interp1d(tel2['Distance'], tel2[metric], kind='linear', fill_value="extrapolate")
         tel2_interp = interp_func(tel1['Distance'])
         diff = tel1[metric] - tel2_interp
         max_diff = np.max(np.abs(diff)) if np.max(np.abs(diff)) > 0 else 1
-        rot_coords = _rotate(tel1[['X', 'Y']].to_numpy(), angle=track_angle)
 
-        # map
-        fig.add_trace(go.Scatter(
-            x=rot_coords[:, 0],
-            y=rot_coords[:, 1],
-            mode='lines+markers',
-            name='Track Map',
-            showlegend=True,
-            marker=dict(size=4, color=diff, colorscale='RdBu', reversescale=True, cmin=-max_diff, cmax=max_diff, cmid=0, showscale=True, colorbar=dict(thickness=15, x=-0.15, title=dict(text=f"Higher {metric}", side='top'), tickvals=[-max_diff, 0, max_diff], ticktext=[f"{lap2_label} L{lap2_num}", "Equal", f"{lap1_label} L{lap1_num}"]))), 
-            hovertemplate=f'{metric} Difference: %{{marker.color:.2f}} {unit}<extra></extra>',
-            row=1, col=1)
+        # Use pos1 or tel1 coordinates for spatial track map
+        map_coords = pos1[['X', 'Y']].to_numpy() if {'X', 'Y'}.issubset(pos1.columns) else tel1[['X', 'Y']].to_numpy()
+        rot_coords = _rotate(map_coords, angle=track_angle)
 
+        # Add Track Map Trace
+        fig.add_trace(
+            go.Scatter(
+                x=rot_coords[:, 0],
+                y=rot_coords[:, 1],
+                mode='lines+markers',
+                name='Track Map',
+                showlegend=True,
+                marker=dict(
+                    size=4, 
+                    color=diff, 
+                    colorscale='RdBu', 
+                    reversescale=True, 
+                    cmin=-max_diff, 
+                    cmax=max_diff, 
+                    cmid=0, 
+                    showscale=True, 
+                    colorbar=dict(
+                        thickness=15, 
+                        x=-0.15, 
+                        title=dict(text=f"Higher {metric}", side='top'), 
+                        tickvals=[-max_diff, 0, max_diff], 
+                        ticktext=[f"{lap2_label} L{lap2_num}", "Equal", f"{lap1_label} L{lap1_num}"]
+                    )
+                ), 
+                hovertemplate=f'{metric} Difference: %{{marker.color:.2f}} {unit}<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Add Corner Annotations to Map
         if circuit_info is not None:
             for _, corner in circuit_info.corners.iterrows():
                 track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
-                fig.add_annotation(x=track_x, y=track_y, text=f"{corner['Number']}{corner['Letter']}", showarrow=False, bgcolor="grey", font=dict(color="white", size=10), row=1, col=1)
+                fig.add_annotation(
+                    x=track_x, 
+                    y=track_y, 
+                    text=f"{corner['Number']}{corner['Letter']}", 
+                    showarrow=False, 
+                    bgcolor="grey", 
+                    font=dict(color="white", size=10), 
+                    row=1, col=1
+                )
 
         fig.update_xaxes(range=[0, max_dist], title_text="Distance (m)", row=1, col=2)
         fig.update_yaxes(title_text=f"{metric} [{unit}]", row=1, col=2)
         fig.update_xaxes(visible=False, row=1, col=1)
         fig.update_yaxes(visible=False, scaleanchor="x", scaleratio=1, row=1, col=1)
-        fig.update_layout(title=dict(text=f"{metric} Analysis: {comparison_title_suffix}", x=0.5, xanchor='center'), height=500, template="plotly_white", margin=dict(l=100, r=50, t=80, b=50), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+        fig.update_layout(
+            title=dict(text=f"{metric} Analysis: {comparison_title_suffix}", x=0.5, xanchor='center'), 
+            height=500, 
+            template="plotly_white", 
+            margin=dict(l=100, r=50, t=80, b=50), 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+        )
         
-        return fig
+        figures.append(fig)
+
+    return figures[0] if len(figures) == 1 else figures
 
 
 
@@ -1316,94 +1382,86 @@ def plot_qualifying_results(
     sort_by: str = 'time') -> go.Figure:
     """
     Plot qualifying results from a FastF1 session.
-    
-    Parameters:
-    -----------
-    session : fastf1.core.Session
-        The FastF1 session object containing qualifying data.
-    qualifying_session : str, optional
-        Which qualifying session to plot ('Q1', 'Q2', 'Q3'). Default is 'Q3'.
-    show_gaps : bool, optional
-        Whether to show time gaps to pole position. Default is True.
-    custom_title : str, optional
-        Custom title for the plot. If None, auto-generated.
-    highlight_driver : str, optional
-        Driver code to highlight (e.g., '{driver1_code}'). If None, no highlighting.
-    sort_by : str, optional
-        Sort results by 'time' (fastest first) or 'position' (grid order). Default is 'time'.
-    
-    Returns:
-    --------
-    go.Figure
-        A Plotly figure object.
     """
     
-    # Filter for drivers with a time in the requested qualifying session
-    time_col = f'{qualifying_session}Time'
+    # resolve column naming (fastf1 uses Q1,Q2,Q3. fallback to Q3Time
+    time_col = qualifying_session if qualifying_session in results.columns else f'{qualifying_session}Time'
     
     if time_col not in results.columns:
-        print(f"Qualifying session '{qualifying_session}' not found in results.")
-        return
+        print(f"Qualifying session '{qualifying_session}' (searched column '{time_col}') not found in results.")
+        return None
     
-    # Remove drivers with no time in this session
+    # filter drivers with a time in this session
     results = results[results[time_col].notna()].copy()
     
     if results.empty:
         print(f"No qualifying times available for {qualifying_session}.")
-        return
+        return None
     
-    # Convert time to milliseconds for better display
-    results['TimeMs'] = results[time_col].dt.total_seconds() * 1000
+    # timing & gaps
+    results['TimeSeconds'] = results[time_col].dt.total_seconds()
+    results['TimeMs'] = results['TimeSeconds'] * 1000
     
-    # Calculate gaps to pole position (fastest time)
-    pole_time_ms = results['TimeMs'].min()
-    results['GapToPolems'] = results['TimeMs'] - pole_time_ms
-    results['GapToPole'] = results['GapToPolems'] / 1000  # Convert back to seconds for display
+    pole_time_s = results['TimeSeconds'].min()
+    results['GapToPole'] = results['TimeSeconds'] - pole_time_s
     
-    # Sort
+    # sort
+    pos_col = 'Position' if 'Position' in results.columns else 'GridPosition'
     if sort_by == 'time':
-        results = results.sort_values('TimeMs')
+        results = results.sort_values('TimeSeconds', ascending=False)
     else:
-        results = results.sort_values('GridPosition')
+        results = results.sort_values(pos_col, ascending=False)
     
-    # Get driver colors
-    results['DriverColor'] = results['DriverNumber'].apply(
-        lambda x: session.get_driver(x)['TeamColor'] if session.get_driver(x) else '#ffffff'
-    )
+    # driver colors
+    if 'TeamColor' in results.columns:
+        results['DriverColor'] = results['TeamColor'].apply(
+            lambda c: f"#{c}" if isinstance(c, str) and not c.startswith('#') else ('#cccccc' if pd.isna(c) else c)
+        )
+    else:
+        results['DriverColor'] = '#1f77b4'
     
-    # Create driver labels
-    results['DriverLabel'] = results['DriverCode'] + ' (' + results['TeamName'] + ')'
+    # driver labels
+    driver_code_col = 'Abbreviation' if 'Abbreviation' in results.columns else 'DriverCode'
+    results['DriverLabel'] = results[driver_code_col].astype(str)
+    if 'TeamName' in results.columns:
+        results['DriverLabel'] += ' (' + results['TeamName'] + ')'
     
-    # Highlight logic
-    results['MarkerSize'] = 8
-    results.loc[results['DriverCode'] == highlight_driver, 'MarkerSize'] = 12
+    # highlight
+    border_widths = [3 if str(code) == str(highlight_driver) else 0 for code in results[driver_code_col]]
+    border_colors = ['#FFD700' if str(code) == str(highlight_driver) else 'rgba(0,0,0,0)' for code in results[driver_code_col]]
     
-    # Build hover text
     hover_texts = []
     for _, row in results.iterrows():
-        time_str = row[time_col].strftime('%M:%S.%f')[:-3]
+        td = row[time_col]
+        minutes, seconds = divmod(td.seconds, 60)
+        milliseconds = td.microseconds // 1000
+        time_str = f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+        
         gap_str = f"<br>Gap to pole: +{row['GapToPole']:.3f}s" if show_gaps else ""
+        pos_val = int(row[pos_col]) if pos_col in row and pd.notna(row[pos_col]) else "N/A"
+        
+        driver_code = row.get(driver_code_col, '')
+        team_name = row.get('TeamName', '')
+        
         hover_text = (
-            f"{row['DriverCode']} ({row['TeamName']})<br>"
-            f"Qualifying: {time_str}<br>"
-            f"Grid Position: {int(row['GridPosition'])}"
+            f"<b>{driver_code}</b> ({team_name})<br>"
+            f"Qualifying Time: {time_str}<br>"
+            f"Position: {pos_val}"
             f"{gap_str}"
         )
         hover_texts.append(hover_text)
     
     results['HoverText'] = hover_texts
     
-    # Create figure
     fig = go.Figure()
     
-    # Add bars
     fig.add_trace(go.Bar(
         y=results['DriverLabel'],
-        x=results['TimeMs'],
+        x=results['TimeSeconds'],
         orientation='h',
         marker=dict(
             color=results['DriverColor'],
-            size=results['MarkerSize']
+            line=dict(color=border_colors, width=border_widths)
         ),
         customdata=results['HoverText'],
         hovertemplate='%{customdata}<extra></extra>',
@@ -1411,28 +1469,25 @@ def plot_qualifying_results(
         name='Qualifying Time'
     ))
     
-    # Title
-    if custom_title:
-        title = custom_title
-    else:
-        title = f"{session.event['EventName']} {session.event['Year']} - Qualifying {qualifying_session} Results"
+    title = custom_title if custom_title else f"Qualifying {qualifying_session} Results"
     
-    # Layout
+    min_x = results['TimeSeconds'].min() - 0.5
+    max_x = results['TimeSeconds'].max() + 0.5
+    
     fig.update_layout(
         title=dict(text=title, x=0.5, xanchor='center'),
-        xaxis_title="Qualifying Time (milliseconds)",
+        xaxis_title="Lap Time (seconds)",
         yaxis_title="Driver",
-        height=max(600, len(results) * 25),
+        height=max(500, len(results) * 30),
         template="plotly_white",
-        margin=dict(l=200, r=50, t=100, b=50),
+        margin=dict(l=150, r=50, t=80, b=50),
         showlegend=False
     )
     
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgrey')
+    fig.update_xaxes(range=[min_x, max_x], showgrid=True, gridwidth=1, gridcolor='lightgrey')
     fig.update_yaxes(showgrid=False)
     
     return fig
-
 
 
 def plot_gap_between_d1_d2(
