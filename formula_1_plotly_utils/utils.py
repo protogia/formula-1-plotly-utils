@@ -5,6 +5,7 @@ import plotly.colors as pcolors
 import pandas as pd
 import numpy as np
 import pandas as pd
+import fastf1
 from datetime import  datetime
 from typing import Optional, List, Sequence, Literal
 from fastf1.plotting._plotting import _COLOR_PALETTE
@@ -17,6 +18,9 @@ from formula_1_plotly_utils import definitions
 
 _logger = get_logger(__package__)
 
+# Enable fastf1 color scheme
+fastf1.plotting.setup_mpl(misc_mpl_mods=False)
+
 
 # Helper function to rotate track coordinates
 def _rotate(xy, *, angle):
@@ -25,73 +29,73 @@ def _rotate(xy, *, angle):
     return np.matmul(xy, rot_mat)
 
 
-def setup_plotly(color_scheme: str = None):
-    """
-    Configures Plotly with the FastF1 dark theme.
-    """
-    if color_scheme == "FastF1":
-        _enable_fastf1_color_scheme()
+# def setup_plotly(color_scheme: str = None):
+#     """
+#     Configures Plotly with the FastF1 dark theme.
+#     """
+#     if color_scheme == "FastF1":
+#         _enable_fastf1_color_scheme()
 
 
-def _enable_fastf1_color_scheme():
-    # Defining the colors to match exactly
-    bg_color = '#292625'      # figure.facecolor
-    plot_bg_color = '#1e1c1b' # axes.facecolor
-    grid_color = '#2d2928'    # axes.edgecolor
-    text_color = '#F1F1F3'    # text.color / axes.labelcolor
+# def _enable_fastf1_color_scheme():
+#     # Defining the colors to match exactly
+#     bg_color = '#292625'      # figure.facecolor
+#     plot_bg_color = '#1e1c1b' # axes.facecolor
+#     grid_color = '#2d2928'    # axes.edgecolor
+#     text_color = '#F1F1F3'    # text.color / axes.labelcolor
 
-    fastf1_template = go.layout.Template(
-        layout=go.Layout(
-            paper_bgcolor=bg_color,
-            plot_bgcolor=plot_bg_color,
-            font=dict(
-                family="sans-serif",
-                color=text_color,
-                size=14
-            ),
+#     fastf1_template = go.layout.Template(
+#         layout=go.Layout(
+#             paper_bgcolor=bg_color,
+#             plot_bgcolor=plot_bg_color,
+#             font=dict(
+#                 family="sans-serif",
+#                 color=text_color,
+#                 size=14
+#             ),
 
-            title=dict(
-                font=dict(size=19, color=text_color),
-                pad=dict(t=12),
-                x=0.5,
-                xanchor='center'
-            ),
-            xaxis=dict(
-                gridcolor=grid_color,
-                linecolor=grid_color,
-                zerolinecolor=grid_color,
-                showline=True,
-                tickfont=dict(color='#f1f2f3'), 
-                titlefont=dict(color='#f1f2f3'),
-                mirror=True # Matches the "box" look of MPL
-            ),
-            yaxis=dict(
-                gridcolor=grid_color,
-                linecolor=grid_color,
-                zerolinecolor=grid_color,
-                showline=True,
-                tickfont=dict(color='#f1f2f3'), # Matches ytick.color
-                titlefont=dict(color='#f1f2f3'),
-                mirror=True
-            ),
-            legend=dict(
-                bgcolor='rgba(25, 25, 25, 0.7)',
-                bordercolor='rgba(25, 25, 25, 0.9)',
-                borderwidth=1,
-                font=dict(color=text_color)
-            ),
-            # line colors
-            colorway=_COLOR_PALETTE,
-            # Plotly specific: Ensure the hover label matches the theme
-            hoverlabel=dict(
-                bgcolor=plot_bg_color,
-                font=dict(color=text_color, size=13)
-            )
-        )
-    )
+#             title=dict(
+#                 font=dict(size=19, color=text_color),
+#                 pad=dict(t=12),
+#                 x=0.5,
+#                 xanchor='center'
+#             ),
+#             xaxis=dict(
+#                 gridcolor=grid_color,
+#                 linecolor=grid_color,
+#                 zerolinecolor=grid_color,
+#                 showline=True,
+#                 tickfont=dict(color='#f1f2f3'), 
+#                 titlefont=dict(color='#f1f2f3'),
+#                 mirror=True # Matches the "box" look of MPL
+#             ),
+#             yaxis=dict(
+#                 gridcolor=grid_color,
+#                 linecolor=grid_color,
+#                 zerolinecolor=grid_color,
+#                 showline=True,
+#                 tickfont=dict(color='#f1f2f3'), # Matches ytick.color
+#                 titlefont=dict(color='#f1f2f3'),
+#                 mirror=True
+#             ),
+#             legend=dict(
+#                 bgcolor='rgba(25, 25, 25, 0.7)',
+#                 bordercolor='rgba(25, 25, 25, 0.9)',
+#                 borderwidth=1,
+#                 font=dict(color=text_color)
+#             ),
+#             # line colors
+#             colorway=_COLOR_PALETTE,
+#             # Plotly specific: Ensure the hover label matches the theme
+#             hoverlabel=dict(
+#                 bgcolor=plot_bg_color,
+#                 font=dict(color=text_color, size=13)
+#             )
+#         )
+#     )
     
-    pio.templates["fastf1"] = fastf1_template
-    pio.templates.default = "fastf1"
+#     pio.templates["fastf1"] = fastf1_template
+#     pio.templates.default = "fastf1"
 
 
 ################################################
@@ -746,117 +750,82 @@ def plot_tyre_strategies(
     return fig
 
 
-def plot_pitstop_durations(
-        choosen_drivers: List, 
-        laps: pd.DataFrame, 
-        track_status: pd.DataFrame
-    ):
-
-    pitstop_times = {}
-    individual_pitstop_durations = {}
-
-    for driver in choosen_drivers:
-        driver_laps = laps.pick_driver(driver).reset_index(drop=True)
-
-        # laps where the driver entered pits
-        pit_in_laps = driver_laps.loc[driver_laps['PitInTime'].notnull()]
-
-        total_pitstop_duration = pd.Timedelta(seconds=0)
-        driver_pitstop_list = []
-
-        for index, pit_in_lap in pit_in_laps.iterrows():
-            # lap after the pit-in lap where PitOutTime not null
-            next_lap_index = pit_in_lap.name + 1
-            if next_lap_index < len(driver_laps):
-                pit_out_lap = driver_laps.loc[next_lap_index]
-                if pd.notnull(pit_out_lap['PitOutTime']):
-                    # calc timediff
-                    if isinstance(pit_in_lap['PitInTime'], pd.Timedelta) and isinstance(pit_out_lap['PitOutTime'], pd.Timedelta):
-                        pitstop_duration = pit_out_lap['PitOutTime'] - pit_in_lap['PitInTime']
-                    else:
-                        try:
-                            pitstop_duration = pd.to_timedelta(pit_out_lap['PitOutTime']) - pd.to_timedelta(pit_in_lap['PitInTime'])
-                        except ValueError:
-                            pitstop_duration = pd.Timedelta(seconds=0) # Handle cases where conversion fails
 
 
-                    total_pitstop_duration += pitstop_duration
-                    driver_pitstop_list.append({'LapNumber': pit_in_lap['LapNumber'], 'Duration': pitstop_duration})
-                else:
-                    print(f"Warning: Could not find PitOutTime for pit stop starting on Lap {pit_in_lap['LapNumber']} for driver {driver}")
+def plot_total_pitstop_time(session):
+    # extract data from pit_stops table
+    if hasattr(session, 'pit_stops') and not session.pit_stops.empty:
+        df_stops = session.pit_stops.copy()
+        df_stops = df_stops.rename(columns={'Duration': 'Seconds', 'StopNumber': 'Number'})
+        if pd.api.types.is_timedelta64_dtype(df_stops['Seconds']):
+            df_stops['Seconds'] = df_stops['Seconds'].dt.total_seconds()
+        # Ensure Lap column exists for the text display
+        if 'LapNumber' in df_stops.columns:
+            df_stops['Lap'] = df_stops['LapNumber'].apply(lambda x: f"Lap {int(x)}")
+        else:
+            df_stops['Lap'] = "Stop"
+    else:
+        # Fallback manual extraction
+        individual_pitstops_list = []
+        choosen_drivers = session.laps['Driver'].unique().tolist()
 
+        for driver in choosen_drivers:
+            driver_laps = session.laps.pick_driver(driver).reset_index(drop=True)
+            stops = driver_laps[driver_laps['PitOutTime'].notnull()]
 
-        pitstop_times[driver] = total_pitstop_duration
-        individual_pitstop_durations[driver] = driver_pitstop_list
-    
-    # conv pitstop durations dict to df
-    individual_pitstops_list = []
-    for driver, stops in individual_pitstop_durations.items():
-        for stop in stops:
-            individual_pitstops_list.append({'Driver': driver, 'LapNumber': stop['LapNumber'], 'PitStopDurationSeconds': stop['Duration'].total_seconds()})
+            for i, stop in stops.iterrows():
+                duration = 0
+                if i > 0:
+                    p_in = driver_laps.loc[i-1, 'PitInTime']
+                    p_out = stop['PitOutTime']
+                    if pd.notnull(p_in) and pd.notnull(p_out):
+                        duration = (pd.to_timedelta(p_out) - pd.to_timedelta(p_in)).total_seconds()
 
-    individual_pitstops_df = pd.DataFrame(individual_pitstops_list)
+                if duration > 0:
+                    individual_pitstops_list.append({
+                        'Driver': driver,
+                        'Lap': f"Lap {int(stop['LapNumber'])}",
+                        'Seconds': duration
+                    })
+        df_stops = pd.DataFrame(individual_pitstops_list)
 
-    # plot
-    fig = px.bar(individual_pitstops_df,
-                x='LapNumber',
-                y='PitStopDurationSeconds',
-                color='Driver',
-                title='Individual Pit Stop Durations per Driver',
-                labels={'LapNumber': 'Lap Number', 'PitStopDurationSeconds': 'Pit Stop Duration (seconds)'},
-                barmode='group' # group shows bars side by side for each lap
-                )
+    if df_stops.empty:
+        print("No pit stop duration data is available for this session.")
+        return
 
-    fig.update_layout(xaxis_title='Lap Number', yaxis_title='Pit Stop Duration (seconds)')
+    # sort drivers by total time spent
+    totals = df_stops.groupby('Driver')['Seconds'].sum().sort_values().index.tolist()
 
-    grouped_track_status = _get_track_status_changes(laps, track_status)
+    # driver colors
+    unique_drivers = df_stops['Driver'].unique()
+    color_map = {}
+    for d in unique_drivers:
+        try:
+            color_map[d] = fastf1.plotting.get_driver_color(d, session=session)
+        except:
+            color_map[d] = '#808080' # Fallback
 
-    # vertical lines for track status changes
-    for lap, lap_events in grouped_track_status:
-        if lap > 23 and lap < 35:
-            line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+    fig = px.bar(
+        df_stops,
+        x='Driver', 
+        y='Seconds', 
+        color='Driver', 
+        text='Lap', 
+        title='Total Time Spent in Pit Box',
+        labels={'Seconds': 'Seconds', 'Driver': 'Driver'},
+        category_orders={'Driver': totals},
+        color_discrete_map=color_map,
+    )
 
-            fig.add_vline(
-                x=lap,
-                line_width=2,
-                line_dash="dash",
-                line_color=line_color,
-                layer="above", 
-            )
+    fig.update_traces(textposition='inside')
+    fig.update_layout(
+        barmode='stack',
+        showlegend=False,
+        yaxis_title="Total Seconds (Pit In to Pit Out)",
+        xaxis_title="Drivers"
+    )
 
-            num_events = len(lap_events)
-            vertical_offsets = np.linspace(0, fig.layout.yaxis.range[1] if fig.layout.yaxis.range else 50, num_events) # Adjust the range and number of points as needed
-
-            for i, (index, row) in enumerate(lap_events.iterrows()):
-                event_color = definitions.track_status_colors.get(row['Message'], 'gray')
-
-                fig.add_trace(go.Scatter(
-                    x=[row['Lap']],
-                    y=[vertical_offsets[i]], 
-                    mode='markers',
-                    marker=dict(
-                        size=10,
-                        color=event_color,
-                        symbol='circle', 
-                        line=dict(color='black', width=1)
-                    ),
-                    hoverinfo='text',
-                    text=f"Track Status: {row['Message']}, Lap {row['Lap']}",
-                    showlegend=False 
-                ))
-
-    # legend for the track status colors by adding invisible traces
-    for status, color in definitions.track_status_colors.items():
-        fig.add_trace(go.Scatter(
-            x=[None], # No data
-            y=[None],
-            mode='markers',
-            marker=dict(size=10, color=color, symbol='circle'),
-            legendgroup='Track Status',
-            showlegend=True,
-            name=status
-        ))
-    return fig
+    fig.show()
 
 
 def plot_laptime_distribution_weatherdependent(
@@ -1100,6 +1069,126 @@ def _get_track_status_changes(
     
 
 
+def plot_leading_laptime_evolution(drivers: List, laps: pd.DataFrame, track_status: pd.DataFrame):
+
+    # Ensure 'LapTime' is in timedelta format
+    if 'LapTime' not in laps.columns or not pd.api.types.is_timedelta64_dtype(laps['LapTime']):
+        laps['LapTime'] = pd.to_timedelta(laps['LapTime'])
+
+    # Drop rows where LapNumber or LapTime is NaN
+    cleaned_laps = laps.dropna(subset=['LapNumber', 'LapTime']).copy()
+    cleaned_laps['LapTimeSeconds'] = cleaned_laps['LapTime'].dt.total_seconds()
+
+    plot_data = []
+    current_fastest_overall_time = float('inf')
+    current_fastest_overall_driver = None
+    unique_lap_numbers = sorted(cleaned_laps['LapNumber'].unique())
+
+    for lap_num in unique_lap_numbers:
+        laps_up_to_current = cleaned_laps[cleaned_laps['LapNumber'] <= lap_num]
+        if not laps_up_to_current.empty:
+            fastest_idx_so_far = laps_up_to_current['LapTimeSeconds'].idxmin()
+            fastest_row_so_far = laps_up_to_current.loc[fastest_idx_so_far]
+            if fastest_row_so_far['LapTimeSeconds'] < current_fastest_overall_time:
+                current_fastest_overall_time = fastest_row_so_far['LapTimeSeconds']
+                current_fastest_overall_driver = fastest_row_so_far['Driver']
+        if current_fastest_overall_driver is not None:
+            plot_data.append({
+                'LapNumber': lap_num,
+                'LapTimeSeconds': current_fastest_overall_time,
+                'Driver': current_fastest_overall_driver
+            })
+
+    leading_laps_plot_df = pd.DataFrame(plot_data)
+
+    if leading_laps_plot_df.empty:
+        print("No valid lap data to plot.")
+    else:
+        fig = go.Figure()
+        unique_leading_drivers = leading_laps_plot_df['Driver'].unique()
+
+        for driver in unique_leading_drivers:
+            driver_laps_leading = leading_laps_plot_df[leading_laps_plot_df['Driver'] == driver]
+            fig.add_trace(go.Scatter(
+                x=driver_laps_leading['LapNumber'],
+                y=driver_laps_leading['LapTimeSeconds'],
+                mode='lines+markers',
+                name=driver,
+                hoverinfo='text',
+                text=[
+                    f"Lap: {int(row['LapNumber'])}<br>Driver: {row['Driver']}<br>Lap Time: {row['LapTimeSeconds']:.3f}s"
+                    for idx, row in driver_laps_leading.iterrows()
+                ],
+                connectgaps=False,
+                showlegend=True
+            ))
+
+        # Track Status Annotations
+        track_status_changes = []
+        previous_status = None
+        for index, row in track_status.iterrows():
+            if row['Status'] != previous_status:
+                track_status_changes.append({'Time': row['Time'], 'Status': row['Status']})
+            previous_status = row['Status']
+
+        STATUS_MAPPING = {
+            '1': {'text': 'Green Flag', 'color': 'green'},
+            '2': {'text': 'Yellow Flag', 'color': 'goldenrod'},
+            '3': {'text': 'Safety Car', 'color': 'blue'},
+            '4': {'text': 'Red Flag', 'color': 'red'},
+            '6': {'text': 'VSC', 'color': 'orange'},
+            '13': {'text': 'Chequered Flag', 'color': 'grey'}
+        }
+
+        min_plot_lap = leading_laps_plot_df['LapNumber'].min()
+        max_plot_lap = leading_laps_plot_df['LapNumber'].max()
+        
+        # Dictionary to track how many status labels are placed per lap
+        lap_annotation_counts = {}
+
+        for event in track_status_changes:
+            candidate_laps = laps[laps['LapStartTime'] <= event['Time']]
+            if not candidate_laps.empty:
+                lap_num_for_event = candidate_laps['LapNumber'].max()
+
+                if min_plot_lap <= lap_num_for_event <= max_plot_lap:
+                    mapped_status = STATUS_MAPPING.get(event['Status'])
+                    if mapped_status:
+                        # Increment count for this lap to offset vertically
+                        count = lap_annotation_counts.get(lap_num_for_event, 0)
+                        y_offset = count * 20 # 20px shift per label
+                        
+                        fig.add_vline(
+                            x=lap_num_for_event,
+                            line_width=1,
+                            line_dash="dot",
+                            line_color=mapped_status['color']
+                        )
+                        
+                        fig.add_annotation(
+                            x=lap_num_for_event,
+                            y=1, # Anchor to top of plot area
+                            yref="paper",
+                            yshift=-y_offset, # Move down based on count
+                            text=mapped_status['text'],
+                            showarrow=False,
+                            font=dict(color=mapped_status['color'], size=10),
+                            bgcolor="rgba(255,255,255,0.8)",
+                            xanchor="left"
+                        )
+                        
+                        lap_annotation_counts[lap_num_for_event] = count + 1
+
+        fig.update_layout(
+            title='Evolution of Leading Qualifying Lap Times with Stacked Status Flags',
+            xaxis_title='Lap Number',
+            yaxis_title='Lap Time (seconds)',
+            hovermode='x unified',
+        )
+    return fig
+
+
+
 def plot_leading_laptimes(drivers: List, laps: pd.DataFrame, track_status: pd.DataFrame):
     # Ensure 'LapTime' is in timedelta format
     if 'LapTime' not in laps.columns or not pd.api.types.is_timedelta64_dtype(laps['LapTime']):
@@ -1286,8 +1375,8 @@ def plot_lap_telemetry_comparison(
         if circuit_info is not None and 'Date' in pos1.columns and not pos1.empty:
             for _, corner in circuit_info.corners.iterrows():
                 dist_sq = (pos1['X'] - corner['X'])**2 + (pos1['Y'] - corner['Y'])**2
-                if not dist_sq.empty:
-                    closest_idx = dist_sq.idxmin()
+                if not dist_sempty:
+                    closest_idx = dist_sidxmin()
                     closest_time = pos1.loc[closest_idx, 'Date']
                     tel_idx = (tel1['Date'] - closest_time).abs().idxmin()
                     corner_dist = tel1.loc[tel_idx, 'Distance']
@@ -1362,7 +1451,6 @@ def plot_lap_telemetry_comparison(
         fig.update_layout(
             title=dict(text=f"{metric} Analysis: {comparison_title_suffix}", x=0.5, xanchor='center'), 
             height=500, 
-            template="plotly_white", 
             margin=dict(l=100, r=50, t=80, b=50), 
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
         )
@@ -1479,7 +1567,6 @@ def plot_qualifying_results(
         xaxis_title="Lap Time (seconds)",
         yaxis_title="Driver",
         height=max(500, len(results) * 30),
-        template="plotly_white",
         margin=dict(l=150, r=50, t=80, b=50),
         showlegend=False
     )
