@@ -1,6 +1,15 @@
-import plotly.express as px
-import pandas as pd
+from __future__ import annotations
+from typing import List, Dict, Optional
 
+from datetime import datetime
+
+import pandas as pd
+import numpy as np
+
+import plotly.graph_objects as go
+import plotly.express as px
+
+import fastf1.plotting
 
 def plot_laptime_distribution_weatherdependent(
         laps: pd.DataFrame,

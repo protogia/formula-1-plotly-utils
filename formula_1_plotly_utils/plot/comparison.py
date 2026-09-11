@@ -1,4 +1,19 @@
+from __future__ import annotations
 
+from values import constants
+from _core import geometry
+
+import pandas as pd
+import numpy as np
+
+import fastf1.plotting
+
+from typing import Optional, List, Dict
+
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from scipy.interpolate import interp1d
 
 
 def plot_gap_between_d1_d2(
@@ -114,7 +129,7 @@ def plot_lap_telemetry_comparison(
     figures = []
 
     for metric in metrics:
-        unit = definitions.telemetry_metrics.get(metric, '') if 'definitions' in globals() else ''
+        unit = constants.telemetry_units.get(metric, '') if 'definitions' in globals() else ''
         fig = make_subplots(rows=1, cols=2, column_widths=[0.4, 0.6], horizontal_spacing=0.05)
 
         # FIXED: hovertemplate is now properly INSIDE go.Scatter()
@@ -162,8 +177,8 @@ def plot_lap_telemetry_comparison(
         if circuit_info is not None and 'Date' in pos1.columns and not pos1.empty:
             for _, corner in circuit_info.corners.iterrows():
                 dist_sq = (pos1['X'] - corner['X'])**2 + (pos1['Y'] - corner['Y'])**2
-                if not dist_sempty:
-                    closest_idx = dist_sidxmin()
+                if not dist_sq.empty:
+                    closest_idx = dist_sq.idxmin()
                     closest_time = pos1.loc[closest_idx, 'Date']
                     tel_idx = (tel1['Date'] - closest_time).abs().idxmin()
                     corner_dist = tel1.loc[tel_idx, 'Distance']
@@ -185,7 +200,7 @@ def plot_lap_telemetry_comparison(
 
         # Use pos1 or tel1 coordinates for spatial track map
         map_coords = pos1[['X', 'Y']].to_numpy() if {'X', 'Y'}.issubset(pos1.columns) else tel1[['X', 'Y']].to_numpy()
-        rot_coords = _rotate(map_coords, angle=track_angle)
+        rot_coords = geometry._rotate(map_coords, angle=track_angle)
 
         # Add Track Map Trace
         fig.add_trace(
@@ -220,7 +235,7 @@ def plot_lap_telemetry_comparison(
         # Add Corner Annotations to Map
         if circuit_info is not None:
             for _, corner in circuit_info.corners.iterrows():
-                track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
+                track_x, track_y = geometry._rotate([corner['X'], corner['Y']], angle=track_angle)
                 fig.add_annotation(
                     x=track_x, 
                     y=track_y, 
@@ -248,31 +263,25 @@ def plot_lap_telemetry_comparison(
 
 
 
+from values.colors import get_driver_colors
+
 def plot_laptime_evolution(
-    laps: pd.DataFrame(),
-    drivers: List,
+    laps: pd.DataFrame,
+    drivers: List[str],
     event_lap: int,
     event_label: str,
-
-):
+) -> go.Figure:
     laps_pace = laps.pick_drivers(drivers).copy()
 
-    # 2. Convert LapTime to seconds for plotting
     laps_pace['LapTimeSeconds'] = laps_pace['LapTime'].dt.total_seconds()
 
-    # 3. Filter for the second stint (approx. Lap 20 onwards based on the report)
-    # We show the whole race but focus the narrative on the latter half
-    laps_pace = laps_pace[laps_pace['LapNumber'] > 1]
+    driver_colors = get_driver_colors(laps_pace, drivers)
 
     fig = go.Figure()
-
     for driver in drivers:
         driver_laps = laps_pace[laps_pace['Driver'] == driver]
-
-        try:
-            color = fastf1.plotting.get_driver_color(driver, session=R)
-        except:
-            color = 'white'
+        
+        color = driver_colors.get(driver, '#808080')
 
         fig.add_trace(go.Scatter(
             x=driver_laps['LapNumber'],
@@ -284,7 +293,7 @@ def plot_laptime_evolution(
             hovertemplate=f"Driver: {driver}<br>Lap: %{{x}}<br>Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    # annotation for choosen lap
+    # Annotation for chosen lap
     fig.add_annotation(
         x=34,
         y=laps_pace[(laps_pace['LapNumber'] == event_lap) & (laps_pace['Driver'] == 'ANT')]['LapTimeSeconds'].iloc[0],
@@ -302,10 +311,13 @@ def plot_laptime_evolution(
         xaxis_title='Lap Number',
         yaxis_title='Lap Time (Seconds)',
         hovermode='x unified',
-        yaxis=dict(range=[min(laps_pace['LapTimeSeconds'].dropna()) - 0.5,
-                        max(laps_pace[laps_pace['LapTimeSeconds'] < 120]['LapTimeSeconds'].dropna()) + 0.5])
+        yaxis=dict(range=[
+            min(laps_pace['LapTimeSeconds'].dropna()) - 0.5,
+            max(laps_pace[laps_pace['LapTimeSeconds'] < 120]['LapTimeSeconds'].dropna()) + 0.5
+        ])
     )
     return fig
+
 
 
 def plot_standings_evolution_of_lap(

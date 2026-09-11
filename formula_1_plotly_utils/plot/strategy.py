@@ -1,13 +1,21 @@
+from __future__ import annotations
+import plotly.graph_objects as go
 import plotly.express as px
-from ..constants.colors import compound_colors, track_status_colors
+import numpy as np
+import fastf1
+import fastf1.plotting
 
-
+import pandas as pd
+from typing import List, Optional
+from values.colors import track_status_colors, compound_colors, get_driver_colors
+from values.informations import _get_track_status_changes
 
 def plot_tyre_strategies(
-        drivers: List,
         laps: pd.DataFrame,
         track_status: pd.DataFrame,
-    ) -> 'plotly.graph_objects.Figure':
+        drivers: Optional[List[str]],
+
+    ) -> go.Figure:
     """Visualise tyre strategy and track status for multiple drivers.
 
     Generates a stacked horizontal bar chart that shows the number of laps
@@ -18,9 +26,6 @@ def plot_tyre_strategies(
 
     Parameters
     ----------
-    drivers : list
-        List of driver names to include in the plot.  The order determines
-        the order on the y‑axis.
     laps : pd.DataFrame
         DataFrame containing at least ``Driver``, ``Stint``, ``Compound`` and
         ``LapNumber`` columns.
@@ -28,7 +33,10 @@ def plot_tyre_strategies(
         DataFrame containing at least ``Message`` and ``Time`` columns.
         ``Message`` should be one of the keys in the ``track_status_colors``
         mapping.
-
+    drivers : list
+        List of driver names to include in the plot.  The order determines
+        the order on the y‑axis.
+    
     Returns
     -------
     plotly.graph_objects.Figure
@@ -46,13 +54,16 @@ def plot_tyre_strategies(
 
     added_compounds = set()
 
+    if drivers is None:
+        drivers = laps['Driver'].unique().tolist()
+
     for driver in drivers:
         driver_stints = stints.loc[stints["Driver"] == driver].sort_values(by='Stint') # sort by stint to ensure correct stacking
 
         previous_stint_end = 0
         for idx, row in driver_stints.iterrows():
             compound = row["Compound"]
-            color = definitions.compound_colors.get(compound.upper(), 'gray') 
+            color = compound_colors.get(compound.upper(), 'gray') 
             
             # determine whether to show the legend entry for this compound
             show_legend_entry = False
@@ -91,7 +102,7 @@ def plot_tyre_strategies(
 
     # vertical lines for track status changes
     for lap, lap_events in grouped_track_status:
-        line_color = definitions.track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
+        line_color = track_status_colors.get(lap_events.iloc[0]['Message'], 'gray')
 
         fig.add_vline(
             x=lap,
@@ -113,7 +124,7 @@ def plot_tyre_strategies(
             driver_y_index = 0 # Default to 0 if no drivers are found
 
         for i, (index, row) in enumerate(lap_events.iterrows()):
-            event_color = definitions.track_status_colors.get(row['Message'], 'gray')
+            event_color = track_status_colors.get(row['Message'], 'gray')
 
             fig.add_trace(go.Scatter(
                 x=[row['Lap']],
@@ -130,7 +141,7 @@ def plot_tyre_strategies(
                 showlegend=False,
             ))
 
-    for status, color in definitions.track_status_colors.items():
+    for status, color in track_status_colors.items():
         fig.add_trace(go.Scatter(
             x=[None], 
             y=[None],
@@ -143,44 +154,42 @@ def plot_tyre_strategies(
     return fig
 
 
+def plot_total_pitstop_time(
+    laps: pd.DataFrame,
+):
+    """
+    Plots the total time spent in the pits for each driver.
+    
+    Parameters:
+    -----------
+    laps : pd.DataFrame
+        The FastF1 laps DataFrame (session.laps).
+    """
+    individual_pitstops_list = []
+    choosen_drivers = laps['Driver'].unique().tolist()
 
+    # Manual extraction using the laps DataFrame
+    for driver in choosen_drivers:
+        # Filter for the driver and reset index to match your original logic
+        driver_laps = laps[laps['Driver'] == driver].reset_index(drop=True)
+        stops = driver_laps[driver_laps['PitOutTime'].notnull()]
 
-def plot_total_pitstop_time(session):
-    # extract data from pit_stops table
-    if hasattr(session, 'pit_stops') and not session.pit_stops.empty:
-        df_stops = session.pit_stops.copy()
-        df_stops = df_stops.rename(columns={'Duration': 'Seconds', 'StopNumber': 'Number'})
-        if pd.api.types.is_timedelta64_dtype(df_stops['Seconds']):
-            df_stops['Seconds'] = df_stops['Seconds'].dt.total_seconds()
-        # Ensure Lap column exists for the text display
-        if 'LapNumber' in df_stops.columns:
-            df_stops['Lap'] = df_stops['LapNumber'].apply(lambda x: f"Lap {int(x)}")
-        else:
-            df_stops['Lap'] = "Stop"
-    else:
-        # Fallback manual extraction
-        individual_pitstops_list = []
-        choosen_drivers = session.laps['Driver'].unique().tolist()
+        for i, stop in stops.iterrows():
+            duration = 0
+            if i > 0:
+                p_in = driver_laps.loc[i-1, 'PitInTime']
+                p_out = stop['PitOutTime']
+                if pd.notnull(p_in) and pd.notnull(p_out):
+                    duration = (pd.to_timedelta(p_out) - pd.to_timedelta(p_in)).total_seconds()
 
-        for driver in choosen_drivers:
-            driver_laps = session.laps.pick_driver(driver).reset_index(drop=True)
-            stops = driver_laps[driver_laps['PitOutTime'].notnull()]
-
-            for i, stop in stops.iterrows():
-                duration = 0
-                if i > 0:
-                    p_in = driver_laps.loc[i-1, 'PitInTime']
-                    p_out = stop['PitOutTime']
-                    if pd.notnull(p_in) and pd.notnull(p_out):
-                        duration = (pd.to_timedelta(p_out) - pd.to_timedelta(p_in)).total_seconds()
-
-                if duration > 0:
-                    individual_pitstops_list.append({
-                        'Driver': driver,
-                        'Lap': f"Lap {int(stop['LapNumber'])}",
-                        'Seconds': duration
-                    })
-        df_stops = pd.DataFrame(individual_pitstops_list)
+            if duration > 0:
+                individual_pitstops_list.append({
+                    'Driver': driver,
+                    'Lap': f"Lap {int(stop['LapNumber'])}",
+                    'Seconds': duration
+                })
+                
+    df_stops = pd.DataFrame(individual_pitstops_list)
 
     if df_stops.empty:
         print("No pit stop duration data is available for this session.")
@@ -189,15 +198,22 @@ def plot_total_pitstop_time(session):
     # sort drivers by total time spent
     totals = df_stops.groupby('Driver')['Seconds'].sum().sort_values().index.tolist()
 
-    # driver colors
+    # driver colors extraction without session object
     unique_drivers = df_stops['Driver'].unique()
     color_map = {}
     for d in unique_drivers:
         try:
-            color_map[d] = fastf1.plotting.get_driver_color(d, session=session)
+            # Look up the team name from the laps DataFrame for this driver
+            driver_laps = laps[laps['Driver'] == d]
+            if not driver_laps.empty:
+                team_name = driver_laps['Team'].iloc[0]
+                color_map[d] = fastf1.plotting.get_team_color(team_name)
+            else:
+                color_map[d] = '#808080'
         except:
             color_map[d] = '#808080' # Fallback
 
+    # Plotly visualization
     fig = px.bar(
         df_stops,
         x='Driver', 
@@ -219,4 +235,3 @@ def plot_total_pitstop_time(session):
     )
 
     fig.show()
-

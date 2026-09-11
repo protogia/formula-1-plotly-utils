@@ -1,11 +1,17 @@
 from __future__ import annotations
-import plotly.graph_objects as go
-import numpy as np
 from typing import Sequence, Literal, Optional
 
-from .._core.geometry import rotate
-from .._core.telemetry import compute_telemetry_metrics
-from ..constants.colors import COLOR_PALETTE   
+import pandas as pd
+import numpy as np
+
+import plotly.graph_objects as go
+import plotly.colors as pcolors
+from plotly.subplots import make_subplots
+
+from _core import geometry
+from _core import telemetry
+
+from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.mvapi import CircuitInfo
 
 
@@ -29,18 +35,18 @@ def plot_track(
     if all_telemetry is not None:
         group_cols = [c for c in ['Driver', 'LapNumber'] if c in all_telemetry.columns]
         if group_cols:
-            processed_chunks = [_compute_telemetry_metrics(group) for _, group in all_telemetry.groupby(group_cols)]
+            processed_chunks = [telemetry._compute_telemetry_metrics(group) for _, group in all_telemetry.groupby(group_cols)]
             tel_df = pd.concat(processed_chunks)
         else:
-            tel_df = _compute_telemetry_metrics(all_telemetry)
+            tel_df = telemetry._compute_telemetry_metrics(all_telemetry)
     else:
-        tel_df = _compute_telemetry_metrics(position)
+        tel_df = telemetry._compute_telemetry_metrics(position)
 
     # Rotate track map once
     track = position[['X', 'Y']].to_numpy()
     if circuit_info and hasattr(circuit_info, 'rotation'):
         track_angle = circuit_info.rotation / 180 * np.pi
-        rotated_track = _rotate(track, angle=track_angle)
+        rotated_track = geometry.rotate(track, angle=track_angle)
     else:
         track_angle = 0
         rotated_track = track
@@ -158,7 +164,7 @@ def plot_track(
         if circuit_info and hasattr(circuit_info, 'corners'):
             for _, corner in circuit_info.corners.iterrows():
                 txt = f"{corner['Number']}{corner['Letter']}"
-                track_x, track_y = _rotate([corner['X'], corner['Y']], angle=track_angle)
+                track_x, track_y = geometry.rotate([corner['X'], corner['Y']], angle=track_angle)
                 fig.add_annotation(
                     x=track_x,
                     y=track_y,
