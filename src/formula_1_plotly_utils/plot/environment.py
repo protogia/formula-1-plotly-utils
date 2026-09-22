@@ -8,8 +8,8 @@ import plotly.graph_objects as go
 import plotly.colors as pcolors
 from plotly.subplots import make_subplots
 
-from _core import geometry
-from _core import telemetry
+from .._core import geometry
+from .._core import telemetry
 
 from fastf1.plotting._plotting import _COLOR_PALETTE
 from fastf1.mvapi import CircuitInfo
@@ -46,7 +46,7 @@ def plot_track(
     track = position[['X', 'Y']].to_numpy()
     if circuit_info and hasattr(circuit_info, 'rotation'):
         track_angle = circuit_info.rotation / 180 * np.pi
-        rotated_track = geometry.rotate(track, angle=track_angle)
+        rotated_track = geometry._rotate(track, angle=track_angle)
     else:
         track_angle = 0
         rotated_track = track
@@ -164,7 +164,7 @@ def plot_track(
         if circuit_info and hasattr(circuit_info, 'corners'):
             for _, corner in circuit_info.corners.iterrows():
                 txt = f"{corner['Number']}{corner['Letter']}"
-                track_x, track_y = geometry.rotate([corner['X'], corner['Y']], angle=track_angle)
+                track_x, track_y = geometry._rotate([corner['X'], corner['Y']], angle=track_angle)
                 fig.add_annotation(
                     x=track_x,
                     y=track_y,

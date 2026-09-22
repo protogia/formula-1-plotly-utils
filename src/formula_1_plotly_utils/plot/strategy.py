@@ -7,8 +7,8 @@ import fastf1.plotting
 
 import pandas as pd
 from typing import List, Optional
-from values.colors import track_status_colors, compound_colors, get_driver_colors
-from values.informations import _get_track_status_changes
+from ..values.colors import track_status_colors, compound_colors, get_driver_colors
+from ..values.informations import _get_track_status_changes
 
 def plot_tyre_strategies(
         laps: pd.DataFrame,

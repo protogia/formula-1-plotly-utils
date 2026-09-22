@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from .values import constants
-from ._core import geometry
+from ..values import constants
+from .._core import geometry
 
 import pandas as pd
 import numpy as np

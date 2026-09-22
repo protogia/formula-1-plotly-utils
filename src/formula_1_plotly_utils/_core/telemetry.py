@@ -4,10 +4,6 @@ from fastf1.logger import get_logger
 from scipy.signal import savgol_filter
 
 
-_logger = get_logger(__name__)
-
-
-
 def _smooth_series(s: pd.Series, window: int = 15, polyorder: int = 2) -> np.ndarray:
     """Safely applies a Savitzky-Golay filter to smooth discrete telemetry noise: https://en.wikipedia.org/wiki/Savitzky%E2%80%93Golay_filter"""
     arr = s.to_numpy(dtype=float)
