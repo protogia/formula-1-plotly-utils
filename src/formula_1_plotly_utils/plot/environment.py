@@ -12,7 +12,6 @@ from .._core import geometry
 from .._core import telemetry
 
 from fastf1.plotting._plotting import _COLOR_PALETTE
-from fastf1.mvapi import CircuitInfo
 
 
 

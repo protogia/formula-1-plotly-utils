@@ -6,8 +6,6 @@ from .._core import geometry
 import pandas as pd
 import numpy as np
 
-import fastf1.plotting
-
 from typing import Optional, List, Dict
 
 import plotly.graph_objects as go

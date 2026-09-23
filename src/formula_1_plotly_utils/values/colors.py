@@ -1,13 +1,10 @@
 from __future__ import annotations
 from typing import List, Optional, Dict
+
+import pandas as pd
 import fastf1
 import fastf1.plotting
 
-
-from __future__ import annotations
-from typing import List, Optional, Dict
-import pandas as pd
-import fastf1.plotting
 
 def get_driver_colors(
     laps: pd.DataFrame, 

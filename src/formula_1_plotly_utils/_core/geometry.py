@@ -1,8 +1,8 @@
 from __future__ import annotations
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
-from typing import Iterable
 
 def _rotate(xy: Iterable[float], *, angle: float) -> np.ndarray:
     """Rotate a 2‑D coordinate array by *angle* (rad)."""

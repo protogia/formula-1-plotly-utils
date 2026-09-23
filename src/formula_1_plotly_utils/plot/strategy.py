@@ -1,4 +1,6 @@
 from __future__ import annotations
+from typing import List, Optional
+
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
@@ -6,7 +8,6 @@ import fastf1
 import fastf1.plotting
 
 import pandas as pd
-from typing import List, Optional
 from ..values.colors import track_status_colors, compound_colors, get_driver_colors
 from ..values.informations import _get_track_status_changes
 
