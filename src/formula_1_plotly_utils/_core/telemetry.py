@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from fastf1.logger import get_logger
 from scipy.signal import savgol_filter
 
 
