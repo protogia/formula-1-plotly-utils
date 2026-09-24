@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from ..values import constants
+from ..values.colors import get_driver_colors
+
 from .._core import geometry
 
 import pandas as pd
@@ -260,8 +262,6 @@ def plot_lap_telemetry_comparison(
     return figures[0] if len(figures) == 1 else figures
 
 
-
-from values.colors import get_driver_colors
 
 def plot_laptime_evolution(
     laps: pd.DataFrame,
