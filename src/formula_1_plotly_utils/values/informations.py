@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 from pandas.core.groupby.generic import DataFrameGroupBy
-import values.colors 
+from ..values import colors 
 
 
 def _get_track_status_changes(
@@ -25,7 +25,7 @@ def _get_track_status_changes(
         pd.DataFrame sorted by lap.
     """
     filtered_track_status_changes = track_status[
-        track_status['Message'].isin(values.colors.track_status_colors.keys())
+        track_status['Message'].isin(colors.track_status_colors.keys())
     ].copy()
 
     # add lap-column by finding the lap number closest to event time
