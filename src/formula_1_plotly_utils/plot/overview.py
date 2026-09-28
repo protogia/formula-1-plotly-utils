@@ -258,7 +258,7 @@ def plot_gap_to_leader_evolution(
     for driver in trace_df['Driver'].unique():
         driver_data = trace_df[trace_df['Driver'] == driver]
         try:
-            color = fastf1.plotting.get_driver_color(driver, session=R)
+            color = fastf1.plotting.get_driver_color(laps, laps['Drivers'].unique())
         except:
             color = 'gray'
 
