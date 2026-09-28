@@ -3,6 +3,99 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 
+def _filter_slow_laps(
+    laps: pd.DataFrame,
+    time_column: str = "LapTime",
+    group_columns: list | None = None,
+    mad_multiplier: float = 3.0,
+    minimum_relative_threshold: float = 0.08,
+    remove_pit_laps: bool = True,
+) -> pd.DataFrame:
+    """
+    Remove unusually slow laps.
+
+    A lap is retained when:
+
+        lap_time <= median + max(
+            mad_multiplier * MAD,
+            minimum_relative_threshold * median
+        )
+
+    Parameters
+    ----------
+    laps:
+        FastF1 laps DataFrame.
+
+    time_column:
+        Column containing lap times as timedeltas.
+
+    group_columns:
+        Columns used to calculate separate baselines.
+        For example ["Driver", "Compound"].
+
+    mad_multiplier:
+        Higher values keep more slow laps.
+
+    minimum_relative_threshold:
+        Minimum allowed percentage above the median.
+        0.08 means 8%.
+
+    remove_pit_laps:
+        Whether to remove laps with PitInTime or PitOutTime.
+    """
+
+    filtered = laps.copy()
+
+    filtered = filtered[
+        filtered[time_column].notna()
+        & (filtered[time_column] > pd.Timedelta(0))
+    ].copy()
+
+    # Remove laps involving pit entry or pit exit
+    if remove_pit_laps:
+        pit_columns = [
+            col for col in ["PitInTime", "PitOutTime"]
+            if col in filtered.columns
+        ]
+
+        for col in pit_columns:
+            filtered = filtered[filtered[col].isna()]
+
+    filtered["_LapTimeSeconds"] = (
+        filtered[time_column].dt.total_seconds()
+    )
+
+    if group_columns is None:
+        group_columns = ["Driver"]
+
+    # Calculate the median lap time for each group
+    grouped = filtered.groupby(group_columns)["_LapTimeSeconds"]
+
+    median = grouped.transform("median")
+    mad = grouped.transform(
+        lambda values: np.median(np.abs(values - np.median(values)))
+    )
+
+    # Convert MAD into a usable threshold.
+    # The relative threshold prevents an unrealistically strict filter
+    # when the MAD is very small.
+    mad_threshold = mad_multiplier * mad
+    relative_threshold = minimum_relative_threshold * median
+
+    allowed_slowest_time = median + np.maximum(
+        mad_threshold,
+        relative_threshold,
+    )
+
+    filtered = filtered[
+        filtered["_LapTimeSeconds"] <= allowed_slowest_time
+    ].copy()
+    filtered.drop(columns="_LapTimeSeconds")
+
+    return filtered
+
+
+
 def _smooth_series(s: pd.Series, window: int = 15, polyorder: int = 2) -> np.ndarray:
     """Safely applies a Savitzky-Golay filter to smooth discrete telemetry noise: https://en.wikipedia.org/wiki/Savitzky%E2%80%93Golay_filter"""
     arr = s.to_numpy(dtype=float)
