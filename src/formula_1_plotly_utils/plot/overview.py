@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import List, Dict, Optional
 
+from .._core import telemetry
+
 from datetime import datetime
 
 import pandas as pd
@@ -73,6 +75,7 @@ def plot_laptime_distribution_weatherdependent(
 def plot_laptime_distribution_per_compound(laps: pd.DataFrame, drivers: List, results: pd.DataFrame):
     filtered_laps = laps[laps['Driver'].isin(drivers)].copy()
     filtered_laps['LapTimeSeconds'] = filtered_laps['LapTime'].dt.total_seconds()
+    filtered_laps = telemetry._filter_slow_laps(laps=filtered_laps, group_columns=["Driver", "Compound"])
 
     # box plot compounds
     fig = px.box(filtered_laps,
