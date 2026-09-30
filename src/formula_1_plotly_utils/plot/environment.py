@@ -1,18 +1,44 @@
 from __future__ import annotations
 from typing import Sequence, Literal, Optional
+import warnings
 
 import pandas as pd
 import numpy as np
 
 import plotly.graph_objects as go
-import plotly.colors as pcolors
 from plotly.subplots import make_subplots
 
 from .._core import geometry
+from .._core import layout
 from .._core import telemetry
+from .._core.annotations import MarkerInput, _add_markers, _add_track_status, _normalize_markers, _time_x
+from ..values import constants
+from ..values.colors import category_palette, condition_colors
+from ..values.informations import _to_minutes
 
-from fastf1.plotting._plotting import _COLOR_PALETTE
 
+_METRIC_STYLE = {
+    'elevation': dict(name='Elevation Gradient', unit='%'),
+    'speed': dict(name='Speed', unit='km/h'),
+    'lat_g': dict(name='Lateral G', unit='g'),
+    'lon_g': dict(name='Longitudinal G', unit='g'),
+}
+
+
+def _cumulative_distance(position: pd.DataFrame) -> np.ndarray:
+    """Distance along the track in meters (fastf1 X/Y are in 1/10 m)."""
+    if 'Distance' in position.columns:
+        return position['Distance'].to_numpy(dtype=float)
+    steps = np.sqrt(position['X'].diff().fillna(0) ** 2 + position['Y'].diff().fillna(0) ** 2)
+    return (steps.cumsum() / 10).to_numpy()
+
+
+def _distance_markers(markers: MarkerInput):
+    normalized = _normalize_markers(markers)
+    valid = [m for m in normalized if m.distance is not None]
+    if len(valid) < len(normalized):
+        warnings.warn("Markers without 'distance' cannot be placed on track charts and are skipped.", stacklevel=3)
+    return valid
 
 
 def plot_track(
@@ -20,9 +46,27 @@ def plot_track(
     circuit_info: Optional['fastf1.mvapi.CircuitInfo'] = None,
     reference_altitude: int = 0,
     metrics: Sequence[Literal['elevation', 'speed', 'lat_g', 'lon_g']] = ('elevation',),
-    all_telemetry: Optional[pd.DataFrame] = None
+    all_telemetry: Optional[pd.DataFrame] = None,
+    title: Optional[str] = None,
+    markers: MarkerInput = None,
 ) -> go.Figure:
-    """Plot the track layout with customizable metrics using subplots (max 2 columns)."""
+    """
+    Plot the track layout colored by metrics using subplots (max 2 columns).
+
+    Parameters:
+    -----------
+    position : pd.DataFrame
+        Position data with 'X', 'Y', 'Z' (e.g. ``lap.get_telemetry()``).
+    circuit_info : fastf1 CircuitInfo, optional
+        Used for track rotation and corner annotations.
+    metrics : sequence of 'elevation', 'speed', 'lat_g', 'lon_g'
+    all_telemetry : pd.DataFrame, optional
+        Telemetry of several laps/drivers to average the metrics over.
+    title : str, optional
+        Custom chart title.
+    markers : ChartMarker | dict | list, optional
+        Events to highlight (``distance`` in m along the lap).
+    """
     if isinstance(metrics, str):
         metrics = [metrics]
 
@@ -49,16 +93,18 @@ def plot_track(
     else:
         track_angle = 0
         rotated_track = track
+    track_distance = _cumulative_distance(position)
+    distance_markers = _distance_markers(markers)
 
-    titles = [m.replace('_', ' ').title() for m in metrics]
-    
+    titles = [_METRIC_STYLE.get(m.lower(), dict(name=m))['name'] for m in metrics]
+
     # Calculate spacing offsets so colorbars don't overlap in subplots
     horizontal_spacing = 0.15 if cols > 1 else 0.1
     vertical_spacing = 0.12 if rows > 1 else 0.1
 
     fig = make_subplots(
-        rows=rows, 
-        cols=cols, 
+        rows=rows,
+        cols=cols,
         subplot_titles=titles,
         horizontal_spacing=horizontal_spacing,
         vertical_spacing=vertical_spacing
@@ -68,6 +114,7 @@ def plot_track(
         r = idx // cols + 1
         c = idx % cols + 1
         m_key = metric.lower()
+        style = _METRIC_STYLE.get(m_key, dict(name=metric, unit=''))
 
         # Retrieve metric values
         if all_telemetry is not None:
@@ -75,7 +122,7 @@ def plot_track(
                 ref_dist = position['Distance'].values
                 bins = np.concatenate([[-np.inf], (ref_dist[:-1] + ref_dist[1:]) / 2, [np.inf]])
                 tel_df['dist_bin'] = pd.cut(tel_df['Distance'], bins=bins, labels=False)
-                
+
                 avg_series = tel_df.groupby('dist_bin')[m_key].mean()
                 metric_values = avg_series.reindex(range(len(ref_dist))).bfill().ffill().values
             else:
@@ -96,64 +143,39 @@ def plot_track(
         marker_opts = {
             'size': 5,
             'color': metric_values,
-            'opacity': 0.85,
+            'opacity': 0.9,
             'colorbar': dict(
                 len=row_height * 0.85,
                 x=x_pos + 0.01,
                 y=y_pos,
-                thickness=12
+                thickness=12,
+                title=layout._axis_title(style['name'], style.get('unit')),
             )
         }
 
         if m_key == 'lon_g':
             bound = max(max_abs_val, 1.0)
-            marker_opts.update({
-                'colorscale': 'RdBu_r',
-                'cmid': 0.0,
-                'cmin': -bound,
-                'cmax': bound,
-            })
-            marker_opts['colorbar']['title'] = 'Longitudinal G (g)'
-            hover_text = [f"Lon G: {v:+.2f}g" for v in metric_values]
-
+            marker_opts.update({'colorscale': 'RdBu_r', 'cmid': 0.0, 'cmin': -bound, 'cmax': bound})
         elif m_key == 'elevation':
             bound = max(max_abs_val, 0.5)
-            marker_opts.update({
-                'colorscale': 'Spectral_r',
-                'cmid': 0.0,
-                'cmin': -bound,
-                'cmax': bound,
-            })
-            marker_opts['colorbar']['title'] = 'Elevation Gradient (%)'
-            hover_text = [f"Gradient: {v:+.2f}%" for v in metric_values]
-
+            marker_opts.update({'colorscale': 'Spectral_r', 'cmid': 0.0, 'cmin': -bound, 'cmax': bound})
         elif m_key == 'lat_g':
-            marker_opts.update({
-                'colorscale': 'Magma',
-                'cmin': 0.0,
-                'cmax': max(max_val, 1.0),
-            })
-            marker_opts['colorbar']['title'] = 'Lateral G (g)'
-            hover_text = [f"Lat G: {v:.2f}g" for v in metric_values]
-
+            marker_opts.update({'colorscale': 'Magma', 'cmin': 0.0, 'cmax': max(max_val, 1.0)})
         else:  # 'speed'
-            marker_opts.update({
-                'colorscale': 'Turbo',
-                'cmin': min_val,
-                'cmax': max_val,
-            })
-            marker_opts['colorbar']['title'] = 'Speed (km/h)'
-            hover_text = [f"Speed: {v:.1f} km/h" for v in metric_values]
+            marker_opts.update({'colorscale': 'Turbo', 'cmin': min_val, 'cmax': max_val})
 
+        fig.add_trace(layout._track_outline(rotated_track[:, 0], rotated_track[:, 1]), row=r, col=c)
         fig.add_trace(
             go.Scatter(
                 x=rotated_track[:, 0],
                 y=rotated_track[:, 1],
-                mode='lines+markers',
+                mode='markers',
                 marker=marker_opts,
-                line=dict(color=_COLOR_PALETTE[0], width=4),
-                hoverinfo='text',
-                text=hover_text,
+                customdata=track_distance,
+                hovertemplate=(
+                    f"{style['name']}: %{{marker.color:.2f}} {style.get('unit', '')}"
+                    "<br>Distance: %{customdata:.0f} m<extra></extra>"
+                ),
                 showlegend=False
             ),
             row=r, col=c
@@ -169,148 +191,111 @@ def plot_track(
                     y=track_y,
                     text=txt,
                     showarrow=False,
-                    bgcolor="grey",
-                    font=dict(color="white", size=10),
+                    bgcolor=layout.GRID,
+                    font=dict(color=layout.TEXT, size=10),
                     row=r, col=c
                 )
 
-        # Configure aspect ratio for 1:1 mapping scale
+        def _resolve(m):
+            idx_nearest = int(np.abs(track_distance - m.distance).argmin())
+            return rotated_track[idx_nearest, 0], rotated_track[idx_nearest, 1]
+        _add_markers(fig, distance_markers, _resolve, row=r, col=c)
+
+        # 1:1 aspect ratio, no axes on a track map
         axis_num = (r - 1) * cols + c
-        
-        # Plotly layout keys: xaxis, yaxis, xaxis2, yaxis2, etc.
-        x_axis_key = f"xaxis{axis_num}" if axis_num > 1 else "xaxis"
-        y_axis_key = f"yaxis{axis_num}" if axis_num > 1 else "yaxis"
-        
-        # Valid scaleanchor target values: x, x2, x3, etc.
         anchor_target = f"x{axis_num}" if axis_num > 1 else "x"
+        fig.update_yaxes(scaleanchor=anchor_target, scaleratio=1, visible=False, row=r, col=c)
+        fig.update_xaxes(visible=False, row=r, col=c)
 
-        fig.layout[y_axis_key].update(
-            scaleanchor=anchor_target, 
-            scaleratio=1,
-            showgrid=False, 
-            zeroline=False, 
-            showticklabels=False
-        )
-        fig.layout[x_axis_key].update(
-            showgrid=False, 
-            zeroline=False, 
-            showticklabels=False
-        )
-
+    layout._apply_layout(
+        fig,
+        title=title or ('Track Map: ' + ', '.join(titles)),
+        subtitle=layout._session_subtitle(position),
+        height=max(600, 500 * rows),
+    )
     return fig
 
 
 def plot_track_elevation(
         position: pd.DataFrame,
         circuit_info: Optional['fastf1.mvapi.CircuitInfo'] = None,
-        reference_altitude: int = 0
-    ) -> 'plotly.graph_objects.Figure': 
-    """Plot the track elevation with corner annotations 
-    using Plotly.
-
-    The plot is interactive, allowing for zooming and hovering to see 
-    specific altitude gradients and corner details.
+        reference_altitude: int = 0,
+        title: Optional[str] = None,
+        markers: MarkerInput = None,
+    ) -> go.Figure:
+    """Plot the altitude gradient along the track with corner annotations.
 
     Parameters:
-        position: Dataframe containing 'X', 'Y', and 'Z' coordinates. 
+        position: Dataframe containing 'X', 'Y', and 'Z' coordinates.
             Usually obtained from :func:`fastf1.core.Telemetry.get_pos_data`.
-        circuit_info (Optional): Circuit information containing corner 
-            locations and track rotation.
-        reference_altitude (Optional): An offset value added to the 'Z' coordinate 
-            (useful for normalizing altitude to sea level or track minimum).
+        circuit_info (Optional): Circuit information containing corner
+            locations.
+        reference_altitude (Optional): An offset value added to the altitude
+            shown in the hover text (e.g. to normalize to sea level).
+        title (Optional): Custom chart title.
+        markers (Optional): Events to highlight (``distance`` in m).
 
     Returns:
         plotly.graph_objects.Figure: An interactive Plotly figure object.
     """
-
-    # calculate the distance along the track
-    # difference in x and y between consecutive points
     delta_x = position['X'].diff().fillna(0)
     delta_y = position['Y'].diff().fillna(0)
-
-    # distance between consecutive points
     distances = np.sqrt(delta_x**2 + delta_y**2)
+    cumulative_distance = (distances.cumsum() / 10).to_numpy()  # 1/10 m -> m
 
-    # cumulative distance along track
-    cumulative_distance = distances.cumsum()/10
-
-    # aclc gradient
-    altitude_meters = position['Z'].values + reference_altitude
+    altitude_meters = position['Z'].to_numpy() / 10 + reference_altitude
     altitude_diff = position['Z'].diff().fillna(0)
+    altitude_gradient = np.where(distances > 0, (altitude_diff / distances.replace(0, np.nan)) * 100, 0)
+    altitude_gradient = np.nan_to_num(altitude_gradient)
 
-    altitude_gradient = np.where(distances > 0, (altitude_diff / distances) * 100, 0)
-
-    # color scale based on the altitude gradient values
-    colorscale = 'Plasma'
-    min_gradient, max_gradient = np.min(altitude_gradient), np.max(altitude_gradient)
-
-    plasma_colors = pcolors.get_colorscale(colorscale)
-
-    # list of segments with start and end points and corresponding gradient and color
-    segments = []
-    for i in range(len(altitude_gradient) - 1):
-        segment_gradient = (altitude_gradient[i] + altitude_gradient[i+1]) / 2 # Average gradient for the segment
-        normalized_segment_gradient = (segment_gradient - min_gradient) / (max_gradient - min_gradient) if (max_gradient - min_gradient) != 0 else 0
-
-        # interpolate color from colorscale
-        segment_color = pcolors.sample_colorscale(plasma_colors, normalized_segment_gradient)[0]
-        segment = {
-            'x': [cumulative_distance.iloc[i], cumulative_distance.iloc[i+1]], 
-            'y': [altitude_gradient[i], altitude_gradient[i+1]],
-            'gradient': segment_gradient,
-            'color': segment_color 
-        }
-        segments.append(segment)
+    bound = float(np.max(np.abs(altitude_gradient))) or 1.0
 
     fig = go.Figure()
-
-    for segment in segments:
-        fig.add_trace(go.Scatter(
-            x=segment['x'],
-            y=segment['y'],
-            mode='lines',
-            line=dict(color=segment['color'], width=2), # color the line by segment gradient
-            hoverinfo='text',
-            text=f'Altitude Gradient: {segment["gradient"]:.2f}',
-            showlegend=False 
-        ))
-
     fig.add_trace(go.Scatter(
-        x=[None], 
-        y=[None],
+        x=cumulative_distance,
+        y=altitude_gradient,
+        mode='lines',
+        line=dict(color=layout.MUTED, width=1),
+        hoverinfo='skip',
+        showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=cumulative_distance,
+        y=altitude_gradient,
         mode='markers',
         marker=dict(
-            colorscale=colorscale,
-            showscale=True,
-            colorbar=dict(title='Altitude Gradient'),
-            cmin=min_gradient,
-            cmax=max_gradient,
-            color=altitude_gradient 
+            size=4, color=altitude_gradient, colorscale='Spectral_r', cmin=-bound, cmax=bound, cmid=0,
+            colorbar=dict(title=layout._axis_title('Gradient', '%'), thickness=12),
         ),
-        hoverinfo='none',
-        showlegend=False
+        customdata=altitude_meters,
+        hovertemplate='Distance: %{x:.0f} m<br>Gradient: %{y:+.2f} %<br>Altitude: %{customdata:.1f} m<extra></extra>',
+        showlegend=False,
     ))
 
     # vertical lines for corner information
-    for _, corner in circuit_info.corners.iterrows():
-        # match X, Y and cumulatative distance via index
-        distances_to_corner = np.sqrt((position['X'] - corner['X'])**2 + (position['Y'] - corner['Y'])**2)
-        closest_pos_index = distances_to_corner.idxmin()
-        corner_cumulative_distance = cumulative_distance.iloc[closest_pos_index]
+    if circuit_info is not None:
+        for _, corner in circuit_info.corners.iterrows():
+            distances_to_corner = np.sqrt((position['X'] - corner['X'])**2 + (position['Y'] - corner['Y'])**2)
+            corner_distance = cumulative_distance[int(np.argmin(distances_to_corner.to_numpy()))]
+            fig.add_vline(
+                x=corner_distance,
+                line=dict(width=1, dash='dash', color=layout.MUTED),
+                annotation_text=f"C{corner['Number']}{corner['Letter']}",
+                annotation_position="bottom right",
+                annotation_font=dict(color=layout.MUTED, size=10),
+            )
 
-        fig.add_vline(
-            x=corner_cumulative_distance,
-            line_width=1,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"C-{corner['Number']}{corner['Letter']}",
-            annotation_position="top right"
-        )
+    _add_markers(fig, _distance_markers(markers), lambda m: (
+        m.distance,
+        m.y if m.y is not None else float(np.interp(m.distance, cumulative_distance, altitude_gradient)),
+    ))
 
-    fig.update_layout(
-        title='Altitude Gradient Along the Track with Corners',
-        xaxis_title='Distance along Track [m]', # Update x-axis title
-        yaxis_title='Altitude Gradient [%]',
+    layout._apply_layout(
+        fig,
+        title=title or 'Altitude Gradient along the Track',
+        subtitle=layout._session_subtitle(position),
+        x_title=layout._axis_title('Distance', 'm'),
+        y_title=layout._axis_title('Altitude Gradient', '%'),
     )
     return fig
 
@@ -322,120 +307,92 @@ def plot_weather_data(
         humidity: bool = True,
         pressure: bool = True,
         windSpeed: bool = True,
-    ) -> 'plotly.graph_objects.Figure':
-    """Plot multiple weather metrics over time.
+        track_status: Optional[pd.DataFrame] = None,
+        title: Optional[str] = None,
+        markers: MarkerInput = None,
+    ) -> go.Figure:
+    """Plot weather metrics over the session time.
 
-    Creates an interactive Plotly figure containing optional sub‑plots for
-    air temperature, track temperature, humidity, pressure and wind speed.
-    Rain events are highlighted by shading the corresponding time intervals.
+    One row per metric group (temperatures share a row) with a common time axis.
+    Rain is highlighted by blue bands.
 
     Parameters
     ----------
     weather_data : pd.DataFrame
-        DataFrame containing at least the columns ``Time``, ``AirTemp``,
-        ``TrackTemp``, ``Humidity``, ``Pressure``, ``WindSpeed`` and
-        ``Rainfall`` (boolean).  The ``Time`` column should be a datetime
-        type.
-    airTemp : bool, default=True
-        If ``True`` plot the air temperature trace.
-    trackTemp : bool, default=True
-        If ``True`` plot the track temperature trace.
-    humidity : bool, default=True
-        If ``True`` plot the humidity trace.
-    pressure : bool, default=True
-        If ``True`` plot the atmospheric pressure trace.
-    windSpeed : bool, default=True
-        If ``True`` plot the wind‑speed trace.
+        fastf1 ``session.weather_data``.
+    airTemp, trackTemp, humidity, pressure, windSpeed : bool
+        Select the metrics to plot.
+    track_status : pd.DataFrame, optional
+        fastf1 ``session.track_status`` to highlight SC/VSC/red flag phases.
+    title : str, optional
+        Custom chart title.
+    markers : ChartMarker | dict | list, optional
+        Events to highlight (``time`` as session time).
 
     Returns
     -------
     plotly.graph_objects.Figure
-        Interactive Plotly figure with the selected weather traces and a
-        shaded region for rain periods.
-
     """
-    # time column to string for plotting
-    weather_data_str_time = weather_data.copy()
-    weather_data_str_time['Time_str'] = weather_data_str_time['Time'].apply(lambda x: str(x).split(' ')[-1]) # Extract HH:MM:SS
+    data = weather_data.copy()
+    data['Minutes'] = data['Time'].dt.total_seconds() / 60
 
-    # Create subplots with multiple y-axes
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    panels = []
+    temps = [(col, name) for col, name, enabled in (
+        ('AirTemp', 'Air', airTemp), ('TrackTemp', 'Track', trackTemp)) if enabled]
+    if temps:
+        panels.append(('Temperature', '°C', temps))
+    for col, name, enabled in (
+        ('Humidity', 'Humidity', humidity), ('Pressure', 'Pressure', pressure), ('WindSpeed', 'Wind Speed', windSpeed)
+    ):
+        if enabled:
+            panels.append((name, constants.weather_units[col], [(col, name)]))
 
-    if airTemp:
-        fig.add_trace(
-            go.Scatter(x=weather_data_str_time['Time_str'], y=weather_data_str_time['AirTemp'], name='Air Temp'),
-            secondary_y=False,
-        ) 
+    rows = max(1, len(panels))
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)
 
-    if trackTemp:
-        fig.add_trace(
-            go.Scatter(x=weather_data_str_time['Time_str'], y=weather_data_str_time['TrackTemp'], name='Track Temp'),
-            secondary_y=False,
-        )
-
-    if humidity:
-        fig.add_trace(
-            go.Scatter(x=weather_data_str_time['Time_str'], y=weather_data_str_time['Humidity'], name='Humidity'),
-            secondary_y=True,
-        )
-
-    if pressure:
-        fig.add_trace(
-            go.Scatter(x=weather_data_str_time['Time_str'], y=weather_data_str_time['Pressure'], name='Pressure'),
-            secondary_y=True,
-        )
-
-    if windSpeed:
-        fig.add_trace(
-            go.Scatter(x=weather_data_str_time['Time_str'], y=weather_data_str_time['WindSpeed'], name='Wind Speed'),
-            secondary_y=True,
-        )
-
-    # ensure y-axis range is set
-    fig.update_layout(
-        title='Weather Data During the Race',
-        xaxis_title='Time', # Keep Time as x-axis title
-        legend_title='Metric'
-    )
-
-    fig.update_yaxes(title_text="Temperature (°C)", secondary_y=False)
-    fig.update_yaxes(title_text="Value", secondary_y=True)
-
-    # get the y-axis range after adding traces and updating layout
-    y_range_primary = fig.layout.yaxis.range
-
-
-    # shading to indicate rain
-    rain_periods_str_time = weather_data_str_time[weather_data_str_time['Rainfall'] == True].copy()
-    if not rain_periods_str_time.empty:
-        rain_periods_str_time['rain_group'] = (rain_periods_str_time['Time'].diff() > pd.Timedelta(seconds=65)).cumsum()
-        for group_id, group_df in rain_periods_str_time.groupby('rain_group'):
-            start_time_str = group_df['Time_str'].min()
-            end_time_str = group_df['Time_str'].max()
-
-            y0_val = y_range_primary[0] if y_range_primary is not None else 0
-            y1_val = y_range_primary[1] if y_range_primary is not None else 100 
-            
-
-            fig.add_shape(
-                type="rect",
-                x0=start_time_str,
-                y0=y0_val,  # start at the bottom of the primary y-axis
-                x1=end_time_str,
-                y1=y1_val,  # end at the top of the primary y-axis
-                fillcolor="blue",
-                opacity=0.2,
-                layer="below",
-                line_width=0,
+    color_idx = 0
+    for r, (panel_name, unit, series) in enumerate(panels, start=1):
+        for col, name in series:
+            fig.add_trace(
+                go.Scatter(
+                    x=data['Minutes'], y=data[col], mode='lines', name=name,
+                    line=dict(color=category_palette[color_idx % len(category_palette)], width=2),
+                    hovertemplate=f'{name}: %{{y:.1f}} {unit}<extra></extra>',
+                ),
+                row=r, col=1,
             )
+            color_idx += 1
+        fig.update_yaxes(title_text=layout._axis_title(panel_name, unit), row=r, col=1)
 
-        # single legend entry for rain
+    # rain bands
+    rain = data[data['Rainfall'].astype(bool)].copy()
+    if not rain.empty:
+        rain['rain_group'] = (rain['Time'].diff() > pd.to_timedelta(65, unit='s')).cumsum()
+        for _, group_df in rain.groupby('rain_group'):
+            fig.add_vrect(
+                x0=group_df['Minutes'].min(), x1=group_df['Minutes'].max(),
+                fillcolor=condition_colors['Rain'], opacity=0.2, layer='below', line_width=0,
+                row='all', col=1,
+            )
         fig.add_trace(go.Scatter(
-            x=[None], y=[None], # invisible trace
-            mode='markers',
-            marker=dict(size=10, color="blue", opacity=0.5),
-            legendgroup='Rain',
-            showlegend=True,
-            name='Rain'
-        ))
+            x=[None], y=[None], mode='markers',
+            marker=dict(symbol='square', size=12, color=condition_colors['Rain'], opacity=0.5),
+            name='Rain', hoverinfo='skip',
+        ), row=1, col=1)
+
+    _add_track_status(
+        fig, track_status, _to_minutes, data['Time'].max(),
+        row='all', col=1, label_row=1, label_col=1,
+    )
+    _add_markers(fig, markers, lambda m: (_time_x(m), None), row='all', col=1, label_row=1, label_col=1)
+
+    layout._apply_layout(
+        fig,
+        title=title or 'Weather Data During the Session',
+        subtitle=layout._session_subtitle(weather_data),
+        legend_title='Metric',
+        height=max(450, 200 * rows + 150),
+    )
+    fig.update_xaxes(title_text=layout._axis_title('Session Time', 'min'), row=rows, col=1)
+    fig.update_layout(hovermode='x unified')
     return fig

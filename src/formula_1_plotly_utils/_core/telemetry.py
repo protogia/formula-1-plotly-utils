@@ -59,7 +59,7 @@ def _filter_slow_laps(
         ]
 
         for col in pit_columns:
-            filtered = filtered[filtered[col].isna()]
+            filtered = filtered[filtered[col].isna()].copy()
 
     filtered["_LapTimeSeconds"] = (
         filtered[time_column].dt.total_seconds()
@@ -90,7 +90,7 @@ def _filter_slow_laps(
     filtered = filtered[
         filtered["_LapTimeSeconds"] <= allowed_slowest_time
     ].copy()
-    filtered.drop(columns="_LapTimeSeconds")
+    filtered = filtered.drop(columns="_LapTimeSeconds")
 
     return filtered
 
